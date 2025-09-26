@@ -1,0 +1,44 @@
+[build-system]
+requires = ["setuptools>=75", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "epub-enricher"
+version = "0.1.0"
+description = "Utilities to enrich EPUB files"
+readme = "README.md"
+requires-python = ">=3.10"
+authors = [
+  { name = "Elias", email = "" }
+]
+license = { text = "MIT" }
+keywords = ["epub", "ebook", "metadata", "processing"]
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3 :: Only",
+  "License :: OSI Approved :: MIT License",
+  "Operating System :: OS Independent",
+]
+dependencies = []
+
+[project.urls]
+Homepage = "https://example.com/"
+Repository = "https://example.com/repo"
+
+[project.scripts]
+epub-enricher = "epub_enricher.__main__:cli"
+
+[tool.black]
+line-length = 100
+target-version = ["py310", "py311", "py312"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+select = [
+  "E",  # pycodestyle errors
+  "F",  # pyflakes
+  "I",  # isort
+]
+
+
