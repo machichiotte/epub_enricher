@@ -5,14 +5,14 @@ Outil Python pour enrichir des fichiers EPUB (métadonnées, traitement, etc.).
 ### Installation (développement)
 
 1. Créez un environnement virtuel
-   ```bash
-   python -m venv .venv
-   .venv\\Scripts\\activate  # Windows PowerShell
-   ```
+    ```bash
+    python -m venv .venv
+    .venv\\Scripts\\activate  # Windows PowerShell
+    ```
 2. Installation en mode editable
-   ```bash
-   pip install -e .
-   ```
+    ```bash
+    pip install -e .
+    ```
 
 ### Utilisation
 
@@ -52,5 +52,3 @@ epub_enricher/
 ### Licence
 
 MIT
-
-

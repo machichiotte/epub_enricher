@@ -11,5 +11,3 @@ def test_cli_entrypoint():
     code = cli()
     assert isinstance(code, int)
     assert code == 0
-
-

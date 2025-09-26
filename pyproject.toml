@@ -19,7 +19,13 @@ classifiers = [
   "License :: OSI Approved :: MIT License",
   "Operating System :: OS Independent",
 ]
-dependencies = []
+dependencies = [
+  "requests>=2.32",
+  "ebooklib>=0.18",
+  "isbnlib>=3.10",
+  "langdetect>=1.0.9",
+  "Pillow>=10.0"
+]
 
 [project.urls]
 Homepage = "https://example.com/"
