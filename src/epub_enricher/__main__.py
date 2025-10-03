@@ -6,7 +6,7 @@ import sys
 
 def cli() -> int:
     try:
-        from .epub_enricher import main  # type: ignore
+        from .main import main  # type: ignore
     except Exception as exc:  # pragma: no cover
         sys.stderr.write(f"Failed to import epub_enricher.main: {exc}\n")
         return 1

@@ -21,4 +21,6 @@ htmlcov/
 .idea/
 .vscode/
 
+.cover_cache/
+logs/
 
