@@ -209,17 +209,24 @@ class EnricherGUI(tk.Tk):
         self.refresh_tree()
         self.clear_details()
 
+    # 📁 Chemin : epub_enricher/src/epub_enricher/gui/main_window.py
     def clear_details(self):
-        """Vide les champs de la vue détaillée."""
+        """Vide les champs de la vue détaillée et les couvertures."""
         for field_vars in self.detail_vars.values():
             field_vars["orig"].set("")
             field_vars["final"].set("")
+
         self.update_comparison_colors()
-        # NOUVEAU : Vider également les labels des couvertures
-        self.cover_orig_label.configure(image="")
-        self.cover_orig_label.image = None
-        self.cover_final_label.configure(image="")
-        self.cover_final_label.image = None
+
+        # ✅ Nettoyer les canvases de couverture au lieu de labels inexistants
+        w, h = GUI_COVER_SIZE
+        for canvas in (self.cover_orig_canvas, self.cover_final_canvas):
+            canvas.delete("all")
+            canvas.create_rectangle(0, 0, w, h, fill="#EEE", outline="")
+            canvas.create_text(
+                w // 2, h // 2, text=f"{w}x{h}", fill="#666", font=("TkDefaultFont", 10, "bold")
+            )
+
         self.current_meta = None
 
     def refresh_tree(self):
@@ -550,7 +557,7 @@ class EnricherGUI(tk.Tk):
             canvas.image = img
             canvas.create_image(w // 2, h // 2, image=img)
             iw, ih = pil.size
-            canvas.create_rectangle(0, h - 25, w, h, fill="#00000099", outline="")
+            canvas.create_rectangle(0, h - 25, w, h, fill="#222222", outline="")
             canvas.create_text(
                 w // 2, h - 12, text=f"{iw}x{ih}", fill="white", font=("TkDefaultFont", 9, "bold")
             )
