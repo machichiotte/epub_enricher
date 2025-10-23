@@ -192,9 +192,9 @@ def query_openlibrary_full(
 
         isbn_list = data.get("isbn_13", []) + data.get("isbn_10", [])
         langs = [
-            l.get("key", "").split("/")[-1]
-            for l in data.get("languages", [])
-            if isinstance(l, dict)
+            lang_entry.get("key", "").split("/")[-1]
+            for lang_entry in data.get("languages", [])
+            if isinstance(lang_entry, dict)
         ]
 
         logger.info("=== OpenLibrary ISBN metadata ===")
@@ -234,7 +234,11 @@ def query_openlibrary_full(
                 langs_obj = details.get("languages", [])
                 if langs_obj:
                     lang = ", ".join(
-                        [l.get("key", "").split("/")[-1] for l in langs_obj if isinstance(l, dict)]
+                        [
+                            lang_entry.get("key", "").split("/")[-1]
+                            for lang_entry in langs_obj
+                            if isinstance(lang_entry, dict)
+                        ]
                     )
 
                 # ISBNs
