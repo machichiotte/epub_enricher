@@ -4,11 +4,9 @@ Analyse avancée du contenu EPUB pour extraire des métadonnées supplémentaire
 
 import logging
 import re
-from io import BytesIO
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, Optional
 
 from ebooklib import epub
-from PIL import Image
 
 from ..config import ISBN_RE
 
@@ -59,7 +57,9 @@ def extract_advanced_metadata(epub_path: str) -> Dict:
         data["content_analysis"] = _analyze_content_structure(book)
 
         logger.info(
-            f"Extracted advanced metadata for {epub_path}: {len([k for k, v in data.items() if v])} fields"
+            "Extracted advanced metadata for %s: %d fields",
+            epub_path,
+            len([k for k, v in data.items() if v]),
         )
 
     except Exception as e:

@@ -16,7 +16,7 @@ from PIL import Image
 
 from ..config import GUI_COVER_SIZE, GUI_GEOMETRY, GUI_TITLE, GUI_TREE_HEIGHT
 from ..core.epub_processor import extract_metadata, find_epubs_in_folder, update_epub_with_metadata
-from ..core.metadata_fetcher import download_cover, query_openlibrary_full
+from ..core.metadata_fetcher import download_cover, fetch_genre_and_summary, query_openlibrary_full
 from ..core.models import EpubMeta
 
 if TYPE_CHECKING:
@@ -757,6 +757,30 @@ class EnricherGUI(tk.Tk):
                 else:
                     meta.suggested_cover_data = None
 
+                # --- NOUVEAU : récupération du genre et du résumé ---
+                try:
+                    genre_summary_data = fetch_genre_and_summary(
+                        title=meta.original_title,
+                        authors=meta.original_authors,
+                        isbn=meta.original_isbn,
+                    )
+
+                    # Appliquer le genre et le résumé suggérés
+                    if genre_summary_data.get("genre"):
+                        meta.suggested_genre = genre_summary_data["genre"]
+                    if genre_summary_data.get("summary"):
+                        meta.suggested_summary = genre_summary_data["summary"]
+
+                    logger.debug(
+                        "Fetched genre and summary for %s: genre=%s, summary=%s",
+                        meta.filename,
+                        meta.suggested_genre or "None",
+                        "Yes" if meta.suggested_summary else "No",
+                    )
+
+                except Exception as e:
+                    logger.warning("Failed to fetch genre and summary for %s: %s", meta.filename, e)
+
                 # --- NOUVEAU : affichage des éditions disponibles ---
                 related_docs = res.get("related_docs", [])
                 if related_docs:
@@ -807,6 +831,9 @@ class EnricherGUI(tk.Tk):
             meta.suggested_cover_url = None
             # NOUVEAU: Réinitialiser aussi les données de la couverture suggérée
             meta.suggested_cover_data = None
+            # NOUVEAU: Réinitialiser le genre et le résumé suggérés
+            meta.suggested_genre = None
+            meta.suggested_summary = None
             meta.processed = False
 
         self.refresh_tree()
@@ -844,6 +871,12 @@ class EnricherGUI(tk.Tk):
                     if m.suggested_cover_data:
                         m.original_cover_data = m.suggested_cover_data
 
+                    # NOUVEAU : Consolider le genre et le résumé
+                    if m.suggested_genre:
+                        m.content_genre = m.suggested_genre
+                    if m.suggested_summary:
+                        m.content_summary = m.suggested_summary
+
                     # Réinitialise l'état du livre
                     m.suggested_title = None
                     m.suggested_authors = []
@@ -854,6 +887,8 @@ class EnricherGUI(tk.Tk):
                     m.suggested_publication_date = None
                     m.suggested_cover_url = None
                     m.suggested_cover_data = None
+                    m.suggested_genre = None
+                    m.suggested_summary = None
                     m.accepted = False
                     m.processed = False
                 any_changed = True
@@ -887,6 +922,8 @@ class EnricherGUI(tk.Tk):
                     "orig_date",
                     "orig_isbn",
                     "orig_lang",
+                    "content_genre",
+                    "content_summary",
                     "sugg_title",
                     "sugg_authors",
                     "sugg_tags",
@@ -894,6 +931,8 @@ class EnricherGUI(tk.Tk):
                     "sugg_date",
                     "sugg_isbn",
                     "sugg_lang",
+                    "sugg_genre",
+                    "sugg_summary",
                     "accepted",
                     "processed",
                     "note",
@@ -911,6 +950,8 @@ class EnricherGUI(tk.Tk):
                         m.original_publication_date,
                         m.original_isbn,
                         m.original_language,
+                        m.content_genre or "",
+                        m.content_summary or "",
                         m.suggested_title,
                         ";".join(m.suggested_authors or []),
                         ";".join(m.suggested_tags or []),
@@ -918,6 +959,8 @@ class EnricherGUI(tk.Tk):
                         m.suggested_publication_date,
                         m.suggested_isbn,
                         m.suggested_language,
+                        m.suggested_genre or "",
+                        m.suggested_summary or "",
                         m.accepted,
                         m.processed,
                         m.note,

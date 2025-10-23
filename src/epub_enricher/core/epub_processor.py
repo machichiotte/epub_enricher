@@ -165,7 +165,10 @@ def extract_metadata(epub_path: str) -> Dict:
         advanced_data = extract_advanced_metadata(epub_path)
         data.update(advanced_data)
         logger.info(
-            "Extracted advanced metadata for %s: content_isbn=%s, content_genre=%s, content_summary=%s",
+            (
+                "Extracted advanced metadata for %s: "
+                "content_isbn=%s, content_genre=%s, content_summary=%s"
+            ),
             epub_path,
             advanced_data.get("content_isbn"),
             advanced_data.get("content_genre"),

@@ -25,6 +25,7 @@ from ..config import (
     OPENLIB_SEARCH,
     ensure_directories,
 )
+from .external_apis import fetch_genre_and_summary_from_sources
 
 logger = logging.getLogger(__name__)
 OPENLIB_BASE = "https://openlibrary.org"
@@ -345,3 +346,34 @@ def download_cover(url: str) -> Optional[bytes]:
     except Exception as e:
         logger.warning("download_cover failed for %s: %s", url, e)
         return None
+
+
+def fetch_genre_and_summary(
+    title: Optional[str] = None, authors: Optional[List[str]] = None, isbn: Optional[str] = None
+) -> Dict[str, Optional[str]]:
+    """
+    Récupère le genre et le résumé depuis plusieurs sources externes.
+
+    Args:
+        title: Titre du livre
+        authors: Liste des auteurs
+        isbn: ISBN du livre
+
+    Returns:
+        Dict avec 'genre' et 'summary' depuis différentes sources
+    """
+    try:
+        results = fetch_genre_and_summary_from_sources(title, authors, isbn)
+
+        logger.info(
+            "Fetched genre and summary for '%s': genre=%s, summary=%s",
+            title or "Unknown",
+            results.get("genre", "None"),
+            "Yes" if results.get("summary") else "No",
+        )
+
+        return results
+
+    except Exception as e:
+        logger.exception("Error fetching genre and summary: %s", e)
+        return {"genre": None, "summary": None, "sources": {}}
