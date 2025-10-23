@@ -16,7 +16,7 @@ from PIL import Image
 
 from ..config import GUI_COVER_SIZE, GUI_GEOMETRY, GUI_TITLE, GUI_TREE_HEIGHT
 from ..core.epub_processor import extract_metadata, find_epubs_in_folder, update_epub_with_metadata
-from ..core.metadata_fetcher import download_cover, extract_suggested_from_openlib
+from ..core.metadata_fetcher import download_cover, query_openlibrary_full
 from ..core.models import EpubMeta
 
 if TYPE_CHECKING:
@@ -209,7 +209,6 @@ class EnricherGUI(tk.Tk):
         self.refresh_tree()
         self.clear_details()
 
-    # 📁 Chemin : epub_enricher/src/epub_enricher/gui/main_window.py
     def clear_details(self):
         """Vide les champs de la vue détaillée et les couvertures."""
         for field_vars in self.detail_vars.values():
@@ -316,7 +315,6 @@ class EnricherGUI(tk.Tk):
         self.refresh_tree()
         self.on_select(None)
 
-    # NOUVEAU : Fonction dédiée pour choisir la couverture à appliquer
     def choose_cover(self, side: str):
         """Applique la couverture choisie (originale) à la valeur 'finale'."""
         if not self.current_meta:
@@ -328,7 +326,6 @@ class EnricherGUI(tk.Tk):
         # Rafraîchir l'affichage pour voir le changement immédiatement
         self.on_select(None)
 
-    # MODIFIÉ : La fonction gère maintenant des données binaires, pas des URLs
     def get_cover_photo(self, data: bytes | None) -> "ImageTk.PhotoImage | None":
         if not data:
             return None
@@ -349,6 +346,30 @@ class EnricherGUI(tk.Tk):
             logger.exception("Échec de la création de l'aperçu d'image à partir des données")
             return None
 
+    def show_related_editions(self, docs: List[Dict]):
+        """Affiche dans une nouvelle fenêtre toutes les éditions trouvées sur OpenLibrary."""
+        win = tk.Toplevel(self)
+        win.title("Éditions disponibles")
+        win.geometry("900x400")
+
+        cols = ("title", "authors", "language", "isbn", "publisher", "year")
+        tree = ttk.Treeview(win, columns=cols, show="headings")
+        for c in cols:
+            tree.heading(c, text=c.capitalize())
+            tree.column(c, width=150, anchor="w")
+        tree.pack(fill=tk.BOTH, expand=True)
+
+        for doc in docs:
+            title = doc.get("title", "")
+            authors = ", ".join(doc.get("author_name", [])) if doc.get("author_name") else ""
+            lang = ", ".join(doc.get("language", [])) if doc.get("language") else ""
+            isbns = ", ".join(doc.get("isbn", [])[:2]) if doc.get("isbn") else ""
+            publisher = ", ".join(doc.get("publisher", [])) if doc.get("publisher") else ""
+            year = doc.get("first_publish_year", "")
+            tree.insert("", "end", values=(title, authors, lang, isbns, publisher, year))
+
+        ttk.Button(win, text="Fermer", command=win.destroy).pack(pady=6)
+
     def fetch_suggestions_for_selected(self):
         sel = self.tree.selection()
         if not sel:
@@ -362,31 +383,49 @@ class EnricherGUI(tk.Tk):
             idx = int(s)
             meta = self.meta_list[idx]
             try:
-                suggested = extract_suggested_from_openlib(
-                    meta.original_isbn, meta.original_title, meta.original_authors
+                res = query_openlibrary_full(
+                    title=meta.original_title,
+                    authors=meta.original_authors,
+                    isbn=meta.original_isbn,
                 )
+
+                suggested = {}
+                if res.get("by_isbn"):
+                    suggested = res["by_isbn"]
+                elif res.get("related_docs"):
+                    suggested = res["related_docs"][0]
+
                 meta.suggested_title = suggested.get("title")
-                meta.suggested_authors = suggested.get("authors")
+                meta.suggested_authors = suggested.get("authors") or suggested.get("author_name")
                 meta.suggested_isbn = suggested.get("isbn")
                 meta.suggested_language = suggested.get("language")
-                meta.suggested_tags = suggested.get("tags")
                 meta.suggested_publisher = suggested.get("publisher")
-                meta.suggested_publication_date = suggested.get("date")
+                meta.suggested_publication_date = suggested.get("publish_date") or suggested.get(
+                    "first_publish_year"
+                )
+                meta.suggested_tags = suggested.get("subject") or []
 
-                # NOUVEAU : Télécharger la couverture et stocker les données binaires
                 meta.suggested_cover_url = suggested.get("cover")
                 if meta.suggested_cover_url:
                     meta.suggested_cover_data = download_cover(meta.suggested_cover_url)
                 else:
                     meta.suggested_cover_data = None
 
+                # --- NOUVEAU : affichage des éditions disponibles ---
+                related_docs = res.get("related_docs", [])
+                if related_docs:
+                    self.after(0, self.show_related_editions, related_docs)
+
+                # --- ANCIEN CODE : marquage et mise à jour de l'état ---
                 meta.processed = True
                 meta.note = "Suggestion fetched"
                 changed = True
                 logger.debug("Fetched suggestion for %s", meta.filename)
+
             except Exception as e:
                 meta.note = f"Fetch error: {e}"
                 logger.exception("Fetch suggestions error for %s", meta.filename)
+
         if changed:
             self.after(0, self.refresh_tree)
             current_selection = self.tree.selection()
