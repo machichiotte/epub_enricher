@@ -21,6 +21,7 @@ from ..config import (
     SUPPORTED_EXT,
     ensure_directories,
 )
+from .content_analyzer import extract_advanced_metadata
 
 logger = logging.getLogger(__name__)
 
@@ -57,7 +58,7 @@ def safe_read_epub(epub_path: str):
 
 
 def extract_metadata(epub_path: str) -> Dict:
-    """Extrait les métadonnées d'un fichier EPUB, y compris la couverture."""
+    """Extrait les métadonnées d'un fichier EPUB, y compris la couverture et l'analyse avancée."""
     data = {
         "title": None,
         "authors": None,
@@ -158,6 +159,20 @@ def extract_metadata(epub_path: str) -> Dict:
                         break
         except Exception:
             logger.debug("Text ISBN search failed for %s", epub_path)
+
+    # NOUVEAU : Analyse avancée du contenu
+    try:
+        advanced_data = extract_advanced_metadata(epub_path)
+        data.update(advanced_data)
+        logger.info(
+            "Extracted advanced metadata for %s: content_isbn=%s, content_genre=%s, content_summary=%s",
+            epub_path,
+            advanced_data.get("content_isbn"),
+            advanced_data.get("content_genre"),
+            "Yes" if advanced_data.get("content_summary") else "No",
+        )
+    except Exception as e:
+        logger.warning("Advanced metadata extraction failed for %s: %s", epub_path, e)
 
     logger.info(
         "Extracted metadata for %s: title=%s, authors=%s, isbn=%s, lang=%s",

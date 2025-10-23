@@ -69,6 +69,8 @@ class EnricherGUI(tk.Tk):
             "isbn",
             "language",
             "date",
+            "genre",
+            "summary",
             "tags",
             "status",
         )
@@ -76,15 +78,17 @@ class EnricherGUI(tk.Tk):
 
         # Configuration des colonnes avec largeurs optimisées
         column_configs = {
-            "filename": {"width": 200, "anchor": "w"},
-            "title": {"width": 250, "anchor": "w"},
-            "authors": {"width": 180, "anchor": "w"},
-            "publisher": {"width": 120, "anchor": "w"},
-            "isbn": {"width": 100, "anchor": "w"},
-            "language": {"width": 80, "anchor": "w"},
-            "date": {"width": 80, "anchor": "w"},
-            "tags": {"width": 120, "anchor": "w"},
-            "status": {"width": 100, "anchor": "w"},
+            "filename": {"width": 180, "anchor": "w"},
+            "title": {"width": 200, "anchor": "w"},
+            "authors": {"width": 150, "anchor": "w"},
+            "publisher": {"width": 100, "anchor": "w"},
+            "isbn": {"width": 90, "anchor": "w"},
+            "language": {"width": 70, "anchor": "w"},
+            "date": {"width": 70, "anchor": "w"},
+            "genre": {"width": 100, "anchor": "w"},
+            "summary": {"width": 150, "anchor": "w"},
+            "tags": {"width": 100, "anchor": "w"},
+            "status": {"width": 90, "anchor": "w"},
         }
 
         for c in cols:
@@ -159,7 +163,17 @@ class EnricherGUI(tk.Tk):
         ).grid(row=0, column=4, padx=5, pady=3, sticky="w")
 
         # --- Champs dynamiques ---
-        fields = ["title", "authors", "publisher", "isbn", "language", "publication_date", "tags"]
+        fields = [
+            "title",
+            "authors",
+            "publisher",
+            "isbn",
+            "language",
+            "publication_date",
+            "genre",
+            "summary",
+            "tags",
+        ]
         for i, field in enumerate(fields, start=1):
             field_label = field.replace("_", " ").capitalize()
             ttk.Label(frm_comparison, text=field_label).grid(
@@ -169,15 +183,32 @@ class EnricherGUI(tk.Tk):
             self.detail_vars[field] = {"orig": tk.StringVar(), "final": tk.StringVar()}
             self.detail_entries[field] = {}
 
-            orig_entry = ttk.Entry(
-                frm_comparison, textvariable=self.detail_vars[field]["orig"], state="readonly"
-            )
-            orig_entry.grid(row=i, column=2, sticky="ew", padx=5)
-            self.detail_entries[field]["orig"] = orig_entry
+            # Widget spécial pour le résumé (zone de texte)
+            if field == "summary":
+                # Zone de texte pour l'original (lecture seule)
+                orig_text = tk.Text(
+                    frm_comparison, height=3, width=30, state="disabled", wrap=tk.WORD
+                )
+                orig_text.grid(row=i, column=2, sticky="ew", padx=5)
+                self.detail_entries[field]["orig"] = orig_text
 
-            final_entry = ttk.Entry(frm_comparison, textvariable=self.detail_vars[field]["final"])
-            final_entry.grid(row=i, column=4, sticky="ew", padx=5)
-            self.detail_entries[field]["final"] = final_entry
+                # Zone de texte pour la valeur finale (éditable)
+                final_text = tk.Text(frm_comparison, height=3, width=30, wrap=tk.WORD)
+                final_text.grid(row=i, column=4, sticky="ew", padx=5)
+                self.detail_entries[field]["final"] = final_text
+            else:
+                # Entrées normales pour les autres champs
+                orig_entry = ttk.Entry(
+                    frm_comparison, textvariable=self.detail_vars[field]["orig"], state="readonly"
+                )
+                orig_entry.grid(row=i, column=2, sticky="ew", padx=5)
+                self.detail_entries[field]["orig"] = orig_entry
+
+                final_entry = ttk.Entry(
+                    frm_comparison, textvariable=self.detail_vars[field]["final"]
+                )
+                final_entry.grid(row=i, column=4, sticky="ew", padx=5)
+                self.detail_entries[field]["final"] = final_entry
 
             # Bouton utiliser intégré dans sa colonne (col=3)
             use_btn = ttk.Button(
@@ -217,7 +248,8 @@ class EnricherGUI(tk.Tk):
         files = find_epubs_in_folder(folder)
         self.meta_list = []
         for p in files:
-            # MODIFIÉ : On s'attend à ce que extract_metadata retourne aussi "cover_data"
+            # MODIFIÉ : On s'attend à ce que extract_metadata retourne aussi
+            # "cover_data" et les métadonnées de contenu
             res = extract_metadata(p)
             em = EpubMeta(
                 path=p,
@@ -231,6 +263,14 @@ class EnricherGUI(tk.Tk):
                 original_publication_date=res.get("date"),
                 # NOUVEAU : Stockage des données de la couverture originale
                 original_cover_data=res.get("cover_data"),
+                # NOUVEAU : Métadonnées extraites du contenu
+                content_isbn=res.get("content_isbn"),
+                content_summary=res.get("content_summary"),
+                content_genre=res.get("content_genre"),
+                content_publisher=res.get("content_publisher"),
+                content_publication_date=res.get("content_publication_date"),
+                content_edition_info=res.get("content_edition_info"),
+                content_analysis=res.get("content_analysis"),
             )
             self.meta_list.append(em)
         self.refresh_tree()
@@ -262,7 +302,7 @@ class EnricherGUI(tk.Tk):
     def _calculate_metadata_quality(self, meta) -> int:
         """Calcule un score de qualité des métadonnées (0-100%)."""
         score = 0
-        total_fields = 7  # title, authors, publisher, isbn, language, date, tags
+        total_fields = 9  # title, authors, publisher, isbn, language, date, genre, summary, tags
 
         # Vérifier les métadonnées suggérées (priorité)
         if meta.suggested_title:
@@ -279,8 +319,12 @@ class EnricherGUI(tk.Tk):
             score += 1
         if meta.suggested_tags:
             score += 1
+        if meta.suggested_genre:
+            score += 1
+        if meta.suggested_summary:
+            score += 1
 
-        # Si pas de suggestions, vérifier les originales
+        # Si pas de suggestions, vérifier les originales ou le contenu
         if not meta.suggested_title and meta.original_title:
             score += 1
         if not meta.suggested_authors and meta.original_authors:
@@ -294,6 +338,10 @@ class EnricherGUI(tk.Tk):
         if not meta.suggested_publication_date and meta.original_publication_date:
             score += 1
         if not meta.suggested_tags and meta.original_tags:
+            score += 1
+        if not meta.suggested_genre and (meta.content_genre or meta.original_tags):
+            score += 1
+        if not meta.suggested_summary and meta.content_summary:
             score += 1
 
         return int((score / total_fields) * 100)
@@ -309,6 +357,15 @@ class EnricherGUI(tk.Tk):
             if quality_score > 0:
                 status_text += f" ({quality_score}%)"
 
+            # Aperçu du résumé (limité à 50 caractères)
+            summary_preview = ""
+            if m.suggested_summary or m.content_summary:
+                summary_text = m.suggested_summary or m.content_summary or ""
+                if len(summary_text) > 50:
+                    summary_preview = summary_text[:50] + "..."
+                else:
+                    summary_preview = summary_text
+
             vals = (
                 m.filename,
                 m.suggested_title or m.original_title or "",
@@ -317,6 +374,8 @@ class EnricherGUI(tk.Tk):
                 m.suggested_isbn or m.original_isbn or "",
                 m.suggested_language or m.original_language or "",
                 m.suggested_publication_date or m.original_publication_date or "",
+                m.suggested_genre or m.content_genre or "",
+                summary_preview,
                 ", ".join(m.suggested_tags or m.original_tags or []),
                 status_text,
             )
@@ -336,21 +395,42 @@ class EnricherGUI(tk.Tk):
         def format_list(items: List[str] | None) -> str:
             return ", ".join(items) if items else ""
 
+        # Champs de base
         self.detail_vars["title"]["orig"].set(meta.original_title or "")
         self.detail_vars["authors"]["orig"].set(format_list(meta.original_authors))
-        self.detail_vars["tags"]["orig"].set(format_list(meta.original_tags))
         self.detail_vars["publisher"]["orig"].set(meta.original_publisher or "")
         self.detail_vars["publication_date"]["orig"].set(meta.original_publication_date or "")
         self.detail_vars["isbn"]["orig"].set(meta.original_isbn or "")
         self.detail_vars["language"]["orig"].set(meta.original_language or "")
+        self.detail_vars["tags"]["orig"].set(format_list(meta.original_tags))
 
+        # NOUVEAU : Champs de contenu
+        self.detail_vars["genre"]["orig"].set(meta.content_genre or "")
+        self.detail_vars["summary"]["orig"].set(meta.content_summary or "")
+
+        # Valeurs suggérées
         self.detail_vars["title"]["final"].set(meta.suggested_title or "")
         self.detail_vars["authors"]["final"].set(format_list(meta.suggested_authors))
-        self.detail_vars["tags"]["final"].set(format_list(meta.suggested_tags))
         self.detail_vars["publisher"]["final"].set(meta.suggested_publisher or "")
         self.detail_vars["publication_date"]["final"].set(meta.suggested_publication_date or "")
         self.detail_vars["isbn"]["final"].set(meta.suggested_isbn or "")
         self.detail_vars["language"]["final"].set(meta.suggested_language or "")
+        self.detail_vars["tags"]["final"].set(format_list(meta.suggested_tags))
+        self.detail_vars["genre"]["final"].set(meta.suggested_genre or "")
+
+        # Gestion spéciale du résumé (zone de texte)
+        if "summary" in self.detail_entries:
+            # Original
+            orig_text = self.detail_entries["summary"]["orig"]
+            orig_text.config(state="normal")
+            orig_text.delete(1.0, tk.END)
+            orig_text.insert(1.0, meta.content_summary or "")
+            orig_text.config(state="disabled")
+
+            # Final
+            final_text = self.detail_entries["summary"]["final"]
+            final_text.delete(1.0, tk.END)
+            final_text.insert(1.0, meta.suggested_summary or "")
 
         self.update_comparison_colors()
 
@@ -360,10 +440,14 @@ class EnricherGUI(tk.Tk):
     def update_comparison_colors(self):
         """Met à jour les couleurs de fond des champs de comparaison."""
         style = ttk.Style()
-
-        # Crée deux styles customisés pour l'original et la suggestion
+        # Les styles customisés sont toujours nécessaires pour les TEntry
         style.configure("OrigDiff.TEntry", fieldbackground="#FFDDDD")  # Rouge clair
         style.configure("FinalDiff.TEntry", fieldbackground="#DDFFDD")  # Vert clair
+
+        # Définition des couleurs de fond pour tk.Text / tk.Entry non-ttk
+        TEXT_ORIG_DIFF_BG = "#FFDDDD"
+        TEXT_FINAL_DIFF_BG = "#DDFFDD"
+        TEXT_DEFAULT_BG = "white"  # Les widgets tk.Text ont un fond blanc par défaut
 
         for field, vars_dict in self.detail_vars.items():
             orig_val = vars_dict["orig"].get()
@@ -372,22 +456,46 @@ class EnricherGUI(tk.Tk):
             orig_entry = self.detail_entries[field]["orig"]
             final_entry = self.detail_entries[field]["final"]
 
+            is_text_widget = isinstance(orig_entry, tk.Text)
+
             if final_val and orig_val != final_val:
                 # S'ils diffèrent -> mettre couleurs custom
-                orig_entry.configure(style="OrigDiff.TEntry")
-                final_entry.configure(style="FinalDiff.TEntry")
+                if is_text_widget:
+                    # Pour tk.Text, on configure directement l'option 'background'
+                    orig_entry.configure(background=TEXT_ORIG_DIFF_BG)
+                    final_entry.configure(background=TEXT_FINAL_DIFF_BG)
+                else:
+                    # Pour ttk.Entry, on configure le 'style'
+                    orig_entry.configure(style="OrigDiff.TEntry")
+                    final_entry.configure(style="FinalDiff.TEntry")
             else:
                 # Sinon, revenir au style par défaut
-                orig_entry.configure(style="TEntry")
-                final_entry.configure(style="TEntry")
+                if is_text_widget:
+                    # Pour tk.Text, on revient au blanc par défaut
+                    orig_entry.configure(background=TEXT_DEFAULT_BG)
+                    final_entry.configure(background=TEXT_DEFAULT_BG)
+                else:
+                    # Pour ttk.Entry, on revient au style par défaut de TEntry
+                    orig_entry.configure(style="TEntry")
+                    final_entry.configure(style="TEntry")
 
     def choose_field(self, field: str, side: str):
         """Applique la valeur originale au champ 'final'."""
         if not self.current_meta:
             return
         if side == "orig":
-            original_value = getattr(self.current_meta, f"original_{field}")
-            setattr(self.current_meta, f"suggested_{field}", original_value)
+            if field == "summary":
+                # Gestion spéciale pour le résumé
+                content_summary = getattr(self.current_meta, f"content_{field}", None)
+                setattr(self.current_meta, f"suggested_{field}", content_summary)
+            elif field == "genre":
+                # Gestion spéciale pour le genre
+                content_genre = getattr(self.current_meta, f"content_{field}", None)
+                setattr(self.current_meta, f"suggested_{field}", content_genre)
+            else:
+                # Gestion normale pour les autres champs
+                original_value = getattr(self.current_meta, f"original_{field}")
+                setattr(self.current_meta, f"suggested_{field}", original_value)
         self.refresh_tree()
         self.on_select(None)
 
@@ -501,7 +609,11 @@ class EnricherGUI(tk.Tk):
                 and "key" in langs_obj[0]
             ):
                 lang = ", ".join(
-                    [l.get("key", "").split("/")[-1] for l in langs_obj if l.get("key")]
+                    [
+                        lang_item.get("key", "").split("/")[-1]
+                        for lang_item in langs_obj
+                        if lang_item.get("key")
+                    ]
                 )
             else:
                 lang = ", ".join(langs_obj or [])  # S'il s'agit d'une liste de strings
