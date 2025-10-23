@@ -4,6 +4,7 @@ Logique pour interroger les APIs (OpenLibrary) et récupérer les métadonnées
 """
 
 import hashlib
+import json
 import logging
 import os
 import random
@@ -12,7 +13,6 @@ from functools import wraps
 from typing import Callable, Dict, List, Optional
 
 import requests
-from isbnlib import canonical, is_isbn10, is_isbn13
 
 from ..config import (
     API_TIMEOUT,
@@ -27,6 +27,12 @@ from ..config import (
 )
 
 logger = logging.getLogger(__name__)
+OPENLIB_BASE = "https://openlibrary.org"
+
+
+# ======================================================================
+# --- Infrastructure réseau : retry + HTTP ---
+# ======================================================================
 
 
 def retry_backoff(
@@ -93,6 +99,211 @@ def http_download_bytes(url: str, timeout: int = API_TIMEOUT) -> bytes:
     return r.content
 
 
+# ======================================================================
+# --- Fonctions principales de récupération de données ---
+# ======================================================================
+
+
+def fetch_openlibrary_work_details(work_key: str) -> dict:
+    """Récupère les détails complets d'une œuvre OpenLibrary (/works/xxx.json)."""
+    url = f"{OPENLIB_BASE}{work_key}.json"
+    try:
+        r = requests.get(url, timeout=10)
+        if r.status_code == 200:
+            data = r.json()
+            logger.info(f"Fetched work details for {work_key}")
+            return data
+        else:
+            logger.warning(f"Work {work_key} not found: {r.status_code}")
+    except Exception as e:
+        logger.error(f"Error fetching work {work_key}: {e}")
+    return {}
+
+
+def fetch_openlibrary_edition_details(edition_key: str) -> dict:
+    """Récupère les détails complets d'une édition OpenLibrary (/books/xxx.json)."""
+
+    # S'assurer que la clé n'a pas de préfixe (ex: /books/OL123M -> OL123M)
+    if edition_key.startswith("/books/"):
+        edition_key = edition_key.replace("/books/", "")
+
+    url = f"{OPENLIB_BASE}/books/{edition_key}.json"
+    try:
+        # On utilise requests.get directement, comme fetch_openlibrary_work_details
+        r = requests.get(url, timeout=10)
+        if r.status_code == 200:
+            data = r.json()
+            logger.info(f"Fetched edition details for {edition_key}")
+            return data
+        else:
+            logger.warning(f"Edition {edition_key} not found: {r.status_code}")
+    except Exception as e:
+        logger.error(f"Error fetching edition {edition_key}: {e}")
+    return {}
+
+
+def query_openlibrary_full(
+    title: Optional[str] = None, authors: Optional[List[str]] = None, isbn: Optional[str] = None
+) -> Dict[str, List[Dict]]:
+    """
+    Combine les recherches par ISBN et par (titre + auteur) pour regrouper toutes les éditions
+    d'une même œuvre. Retourne un dict avec 'by_isbn' et 'related_docs'.
+    """
+    results = {"by_isbn": None, "related_docs": []}
+
+    # 1️⃣ Recherche directe par ISBN
+    if isbn:
+        data = query_openlibrary_by_isbn(isbn)
+        if data:
+            results["by_isbn"] = data
+
+    # 2️⃣ Recherche complémentaire par titre/auteur
+    if title:
+        auth = authors[0] if authors else None
+        docs = query_openlibrary_search_all(title, auth)
+        if docs:
+            results["related_docs"] = docs
+
+    # 3️⃣ Récupération des détails des œuvres (works)
+    for doc in results.get("related_docs", []):
+        work_key = doc.get("key")
+        if work_key:
+            work_data = fetch_openlibrary_work_details(work_key)
+            if work_data:
+                doc["work_details"] = work_data
+        edition_key = doc.get("cover_edition_key")
+        if edition_key:
+            # La fonction fetch_openlibrary_edition_details gère déjà
+            # le préfixe /books/ si besoin.
+            edition_data = fetch_openlibrary_edition_details(edition_key)
+            if edition_data:
+                doc["edition_details"] = edition_data
+
+    # --- LOGS DÉTAILLÉS POUR DIAGNOSTIC ---
+    if results.get("by_isbn"):
+        data = results["by_isbn"]
+        publishers = data.get("publishers", [])
+        if publishers and isinstance(publishers[0], dict):
+            publisher_name = publishers[0].get("name", "")
+        elif publishers and isinstance(publishers[0], str):
+            publisher_name = publishers[0]
+        else:
+            publisher_name = ""
+
+        isbn_list = data.get("isbn_13", []) + data.get("isbn_10", [])
+        langs = [
+            l.get("key", "").split("/")[-1]
+            for l in data.get("languages", [])
+            if isinstance(l, dict)
+        ]
+
+        logger.info("=== OpenLibrary ISBN metadata ===")
+        logger.info(
+            "Title: %s | Authors: %s | Publisher: %s | ISBN: %s | Lang: %s",
+            data.get("title"),
+            ", ".join([a.get("key", "").split("/")[-1] for a in data.get("authors", [])]),
+            publisher_name,
+            ", ".join(isbn_list),
+            ", ".join(langs),
+        )
+
+    docs = results.get("related_docs", [])
+    if docs:
+        logger.info("=== OpenLibrary related editions ===")
+        for i, doc in enumerate(docs, start=1):
+            title = doc.get("title", "")
+            authors = ", ".join(doc.get("author_name", [])) if doc.get("author_name") else ""
+            has_work = "✅" if "work_details" in doc else "❌"
+            has_edition = "✅" if "edition_details" in doc else "❌"  # Pour vérifier
+
+            # Valeurs par défaut (celles de la recherche, souvent vides)
+            lang = ", ".join(doc.get("language", [])) if doc.get("language") else ""
+            isbns = ", ".join(doc.get("isbn", [])[:3]) if doc.get("isbn") else ""
+            publisher = ", ".join(doc.get("publisher", [])) if doc.get("publisher") else ""
+            year = str(doc.get("first_publish_year", ""))
+
+            # Si on a les détails de l'édition, on les utilise car ils sont meilleurs
+            if "edition_details" in doc:
+                details = doc["edition_details"]
+
+                # Affiche toutes les clés principales reçues pour ce "edition"
+                logger.info(f"    -> Clés reçues pour Edition [{i}]: {list(details.keys())}")
+                logger.info(f"    -> Valeurs reçues pour Edition [{i}]: {details}")
+
+                # Langue
+                langs_obj = details.get("languages", [])
+                if langs_obj:
+                    lang = ", ".join(
+                        [l.get("key", "").split("/")[-1] for l in langs_obj if isinstance(l, dict)]
+                    )
+
+                # ISBNs
+                isbn_list = details.get("isbn_13", []) + details.get("isbn_10", [])
+                if isbn_list:
+                    isbns = ", ".join(isbn_list[:3])  # Limite à 3
+
+                # Publisher
+                pubs_obj = details.get("publishers", [])
+                if pubs_obj:
+                    # Le format varie : parfois liste de strings, parfois liste de dicts
+                    if pubs_obj and isinstance(pubs_obj[0], dict):
+                        publisher = ", ".join([p.get("name") for p in pubs_obj if p.get("name")])
+                    else:
+                        publisher = ", ".join(pubs_obj)  # Liste de strings
+
+                # Année (plus précise depuis l'édition)
+                if details.get("publish_date"):
+                    year = details.get("publish_date")  # ex: "2018" ou "Juin 2018"
+
+            logger.info(
+                f"[{i}] {title} | Lang: {lang} | ISBN: {isbns} | Publisher: {publisher} | "
+                f"Year: {year} | Authors: {authors} | Work: {has_work} | Edition: {has_edition}"
+            )
+
+            # Ajout pour logger la description (si elle existe)
+            if "work_details" in doc:
+                details = doc["work_details"]
+
+                # Affiche toutes les clés principales reçues pour ce "work"
+                logger.info(f"    -> Clés reçues pour Work [{i}]: {list(details.keys())}")
+                logger.info(f"    -> Valeurs reçues pour Work [{i}]: {details}")
+
+                description = details.get("description", "Pas de description.")
+
+                # Parfois la description est un objet {"type": "...", "value": "..."}
+                if isinstance(description, dict):
+                    description = description.get("value", "Pas de description (format objet).")
+
+                # Limite l'affichage aux 200 premiers caractères pour éviter de noyer les logs
+                logger.info(f"    -> Description [{i}]: {description[:200]}...")
+
+    logger.info("===================================")
+    return results
+
+
+def query_openlibrary_search_all(title: str, author: Optional[str] = None) -> Optional[List[Dict]]:
+    """Retourne TOUTES les éditions correspondantes à un titre/auteur."""
+    try:
+        q = title
+        if author:
+            q += f" {author}"
+        params = {"q": q, "title": title, "limit": 20}
+        r = http_get(OPENLIB_SEARCH, params=params)
+        js = r.json()
+        docs = js.get("docs", [])
+        logger.info("OpenLibrary search returned %d docs for query %s", len(docs), q)
+
+        # 🧠 LOG COMPLET — pour visualiser la structure brute
+        logger.info("=== RAW DOCS FROM SEARCH ===")
+        logger.info(json.dumps(docs, indent=2, ensure_ascii=False))
+        logger.info("===================================")
+
+        return docs
+    except Exception as e:
+        logger.warning("query_openlibrary_search_all failed for %s / %s: %s", title, author, e)
+    return None
+
+
 def query_openlibrary_by_isbn(isbn: str) -> Optional[Dict]:
     """Interroge OpenLibrary avec un ISBN pour récupérer les métadonnées."""
     try:
@@ -107,69 +318,6 @@ def query_openlibrary_by_isbn(isbn: str) -> Optional[Dict]:
     except Exception as e:
         logger.warning("query_openlibrary_by_isbn failed for %s: %s", isbn, e)
     return None
-
-
-def query_openlibrary_search(title: str, author: Optional[str] = None) -> Optional[Dict]:
-    """Interroge OpenLibrary avec un titre et auteur pour récupérer les métadonnées."""
-    try:
-        q = title
-        if author:
-            q += f" {author}"
-        params = {"q": q, "title": title}
-        r = http_get(OPENLIB_SEARCH, params=params)
-        js = r.json()
-        docs = js.get("docs")
-        if docs:
-            logger.info("OpenLibrary search returned %d docs for query %s", len(docs), q)
-            return docs[0]
-    except Exception as e:
-        logger.warning("query_openlibrary_search failed for %s / %s: %s", title, author, e)
-    return None
-
-
-def extract_suggested_from_openlib(
-    isbn: Optional[str], title: Optional[str], authors: Optional[List[str]]
-) -> Dict:
-    """Extrait les métadonnées suggérées depuis OpenLibrary."""
-    out = {}
-    if isbn:
-        data = query_openlibrary_by_isbn(isbn)
-        if data:
-            out["title"] = data.get("title")
-            out["authors"] = (
-                [a.get("name") for a in data.get("authors", [])] if data.get("authors") else None
-            )
-            out["isbn"] = isbn
-            cover = data.get("cover")
-            if cover:
-                out["cover"] = cover.get("large") or cover.get("medium") or cover.get("small")
-            languages = data.get("languages")
-            if languages and isinstance(languages, list):
-                lang_keys = [lang.get("key") for lang in languages if isinstance(lang, dict)]
-                if lang_keys:
-                    out["language"] = lang_keys[0].split("/")[-1]
-            return out
-    if title:
-        auth = authors[0] if authors else None
-        doc = query_openlibrary_search(title, auth)
-        if doc:
-            out["title"] = doc.get("title")
-            out["authors"] = doc.get("author_name")
-            isbns = doc.get("isbn")
-            if isbns:
-                for candidate in isbns:
-                    if is_isbn13(candidate) or is_isbn10(candidate):
-                        try:
-                            out["isbn"] = canonical(candidate)
-                            break
-                        except Exception:
-                            out["isbn"] = candidate
-            cover_id = doc.get("cover_i")
-            if cover_id:
-                out["cover"] = f"https://covers.openlibrary.org/b/id/{cover_id}-L.jpg"
-            out["language"] = doc.get("language")[0] if doc.get("language") else None
-            return out
-    return out
 
 
 def download_cover(url: str) -> Optional[bytes]:
