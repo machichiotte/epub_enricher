@@ -24,3 +24,5 @@ htmlcov/
 .cover_cache/
 logs/
 
+# Other
+TODO.md

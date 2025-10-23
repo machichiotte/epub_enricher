@@ -65,20 +65,32 @@ class EnricherGUI(tk.Tk):
             "filename",
             "title",
             "authors",
-            "tags",
             "publisher",
-            "date",
             "isbn",
             "language",
+            "date",
+            "tags",
             "status",
         )
         self.tree = ttk.Treeview(self, columns=cols, show="headings", height=GUI_TREE_HEIGHT)
+
+        # Configuration des colonnes avec largeurs optimisées
+        column_configs = {
+            "filename": {"width": 200, "anchor": "w"},
+            "title": {"width": 250, "anchor": "w"},
+            "authors": {"width": 180, "anchor": "w"},
+            "publisher": {"width": 120, "anchor": "w"},
+            "isbn": {"width": 100, "anchor": "w"},
+            "language": {"width": 80, "anchor": "w"},
+            "date": {"width": 80, "anchor": "w"},
+            "tags": {"width": 120, "anchor": "w"},
+            "status": {"width": 100, "anchor": "w"},
+        }
+
         for c in cols:
             self.tree.heading(c, text=c.replace("_", " ").capitalize())
-            self.tree.column(c, width=140, anchor="w")
-        self.tree.column("filename", width=220)
-        self.tree.column("title", width=200)
-        self.tree.column("authors", width=180)
+            config = column_configs.get(c, {"width": 120, "anchor": "w"})
+            self.tree.column(c, width=config["width"], anchor=config["anchor"])
         self.tree.pack(fill=tk.BOTH, expand=True, padx=6)
         self.tree.bind("<<TreeviewSelect>>", self.on_select)
 
@@ -105,8 +117,10 @@ class EnricherGUI(tk.Tk):
             width=GUI_COVER_SIZE[0],
             height=GUI_COVER_SIZE[1],
             bg="#EEE",
-            highlightthickness=1,
+            highlightthickness=2,
             highlightbackground="#880000",
+            relief="raised",
+            bd=2,
         )
         self.cover_orig_canvas.grid(row=1, column=0, rowspan=20, padx=6, pady=6, sticky="n")
 
@@ -115,10 +129,23 @@ class EnricherGUI(tk.Tk):
             width=GUI_COVER_SIZE[0],
             height=GUI_COVER_SIZE[1],
             bg="#EEE",
-            highlightthickness=1,
+            highlightthickness=2,
             highlightbackground="#004488",
+            relief="raised",
+            bd=2,
         )
         self.cover_final_canvas.grid(row=1, column=5, rowspan=20, padx=6, pady=6, sticky="n")
+
+        # Labels pour les couvertures
+        self.cover_orig_label = ttk.Label(
+            frm_comparison, text="Couverture originale", font=("TkDefaultFont", 9, "bold")
+        )
+        self.cover_orig_label.grid(row=0, column=0, padx=6, pady=3, sticky="w")
+
+        self.cover_final_label = ttk.Label(
+            frm_comparison, text="Couverture suggérée", font=("TkDefaultFont", 9, "bold")
+        )
+        self.cover_final_label.grid(row=0, column=5, padx=6, pady=3, sticky="w")
 
         # --- En-têtes de colonnes ---
         ttk.Label(frm_comparison, text="Champ", font=("TkDefaultFont", 10, "bold")).grid(
@@ -132,7 +159,7 @@ class EnricherGUI(tk.Tk):
         ).grid(row=0, column=4, padx=5, pady=3, sticky="w")
 
         # --- Champs dynamiques ---
-        fields = ["title", "authors", "tags", "publisher", "publication_date", "isbn", "language"]
+        fields = ["title", "authors", "publisher", "isbn", "language", "publication_date", "tags"]
         for i, field in enumerate(fields, start=1):
             field_label = field.replace("_", " ").capitalize()
             ttk.Label(frm_comparison, text=field_label).grid(
@@ -217,32 +244,81 @@ class EnricherGUI(tk.Tk):
 
         self.update_comparison_colors()
 
-        # ✅ Nettoyer les canvases de couverture au lieu de labels inexistants
+        # ✅ Nettoyer les canvases de couverture
         w, h = GUI_COVER_SIZE
         for canvas in (self.cover_orig_canvas, self.cover_final_canvas):
             canvas.delete("all")
             canvas.create_rectangle(0, 0, w, h, fill="#EEE", outline="")
             canvas.create_text(
-                w // 2, h // 2, text=f"{w}x{h}", fill="#666", font=("TkDefaultFont", 10, "bold")
+                w // 2,
+                h // 2,
+                text="Aucune\ncouverture",
+                fill="#666",
+                font=("TkDefaultFont", 10, "bold"),
             )
 
         self.current_meta = None
+
+    def _calculate_metadata_quality(self, meta) -> int:
+        """Calcule un score de qualité des métadonnées (0-100%)."""
+        score = 0
+        total_fields = 7  # title, authors, publisher, isbn, language, date, tags
+
+        # Vérifier les métadonnées suggérées (priorité)
+        if meta.suggested_title:
+            score += 1
+        if meta.suggested_authors:
+            score += 1
+        if meta.suggested_publisher:
+            score += 1
+        if meta.suggested_isbn:
+            score += 1
+        if meta.suggested_language:
+            score += 1
+        if meta.suggested_publication_date:
+            score += 1
+        if meta.suggested_tags:
+            score += 1
+
+        # Si pas de suggestions, vérifier les originales
+        if not meta.suggested_title and meta.original_title:
+            score += 1
+        if not meta.suggested_authors and meta.original_authors:
+            score += 1
+        if not meta.suggested_publisher and meta.original_publisher:
+            score += 1
+        if not meta.suggested_isbn and meta.original_isbn:
+            score += 1
+        if not meta.suggested_language and meta.original_language:
+            score += 1
+        if not meta.suggested_publication_date and meta.original_publication_date:
+            score += 1
+        if not meta.suggested_tags and meta.original_tags:
+            score += 1
+
+        return int((score / total_fields) * 100)
 
     def refresh_tree(self):
         selected_ids = self.tree.selection()
         for i in self.tree.get_children():
             self.tree.delete(i)
         for idx, m in enumerate(self.meta_list):
+            # Calculer la qualité des métadonnées
+            quality_score = self._calculate_metadata_quality(m)
+            status_text = "accepted" if m.accepted else ("processed" if m.processed else "idle")
+            if quality_score > 0:
+                status_text += f" ({quality_score}%)"
+
             vals = (
                 m.filename,
                 m.suggested_title or m.original_title or "",
                 ", ".join(m.suggested_authors or m.original_authors or []),
-                ", ".join(m.suggested_tags or m.original_tags or []),
                 m.suggested_publisher or m.original_publisher or "",
-                m.suggested_publication_date or m.original_publication_date or "",
                 m.suggested_isbn or m.original_isbn or "",
                 m.suggested_language or m.original_language or "",
-                "accepted" if m.accepted else ("processed" if m.processed else "idle"),
+                m.suggested_publication_date or m.original_publication_date or "",
+                ", ".join(m.suggested_tags or m.original_tags or []),
+                status_text,
             )
             self.tree.insert("", "end", iid=str(idx), values=vals)
         if selected_ids:
@@ -350,25 +426,183 @@ class EnricherGUI(tk.Tk):
         """Affiche dans une nouvelle fenêtre toutes les éditions trouvées sur OpenLibrary."""
         win = tk.Toplevel(self)
         win.title("Éditions disponibles")
-        win.geometry("900x400")
+        win.geometry("1200x400")
 
-        cols = ("title", "authors", "language", "isbn", "publisher", "year")
-        tree = ttk.Treeview(win, columns=cols, show="headings")
+        # Frame principal avec scrollbar
+        main_frame = ttk.Frame(win)
+        main_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+
+        # Informations sur le nombre d'éditions
+        info_label = ttk.Label(
+            main_frame,
+            text=f"Trouvé {len(docs)} édition(s) sur OpenLibrary",
+            font=("TkDefaultFont", 10, "bold"),
+        )
+        info_label.pack(pady=(0, 10))
+
+        # Treeview avec scrollbar
+        tree_frame = ttk.Frame(main_frame)
+        tree_frame.pack(fill=tk.BOTH, expand=True)
+
+        cols = ("title", "authors", "language", "isbn", "publisher", "year", "quality")
+        tree = ttk.Treeview(tree_frame, columns=cols, show="headings")
+
+        # Configuration des colonnes
+        column_configs = {
+            "title": {"width": 250, "anchor": "w"},
+            "authors": {"width": 200, "anchor": "w"},
+            "language": {"width": 80, "anchor": "w"},
+            "isbn": {"width": 120, "anchor": "w"},
+            "publisher": {"width": 150, "anchor": "w"},
+            "year": {"width": 80, "anchor": "w"},
+            "quality": {"width": 80, "anchor": "w"},
+        }
+
         for c in cols:
             tree.heading(c, text=c.capitalize())
-            tree.column(c, width=150, anchor="w")
-        tree.pack(fill=tk.BOTH, expand=True)
+            config = column_configs.get(c, {"width": 120, "anchor": "w"})
+            tree.column(c, width=config["width"], anchor=config["anchor"])
 
+        # Scrollbar
+        scrollbar = ttk.Scrollbar(tree_frame, orient=tk.VERTICAL, command=tree.yview)
+        tree.configure(yscrollcommand=scrollbar.set)
+
+        tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+
+        for i, doc in enumerate(docs):
+            # 💡 Début des modifications pour extraire des détails plus précis
+            details = doc.get("edition_details") or doc.get("work_details") or doc
+
+            # Utilise les détails précis ou revient à la valeur de la recherche (doc)
+            title = details.get("title", doc.get("title", ""))
+
+            # Auteurs (plus complexes car les formats sont variés)
+            authors_list = (
+                details.get("author_name")
+                or (
+                    [a["name"] for a in details["authors"]]
+                    if isinstance(details.get("authors"), list)
+                    and details["authors"]
+                    and isinstance(details["authors"][0], dict)
+                    and "name" in details["authors"][0]
+                    else []
+                )
+                or doc.get("author_name")
+            )
+            authors = ", ".join(authors_list or [])
+
+            # Langue (extrait des objets si disponible)
+            langs_obj = details.get("languages", doc.get("language", []))
+            if (
+                isinstance(langs_obj, list)
+                and langs_obj
+                and isinstance(langs_obj[0], dict)
+                and "key" in langs_obj[0]
+            ):
+                lang = ", ".join(
+                    [l.get("key", "").split("/")[-1] for l in langs_obj if l.get("key")]
+                )
+            else:
+                lang = ", ".join(langs_obj or [])  # S'il s'agit d'une liste de strings
+
+            # ISBNs (combine 13 et 10)
+            isbn_list = details.get("isbn_13", []) + details.get("isbn_10", [])
+            isbns = ", ".join(isbn_list[:2] or doc.get("isbn", [])[:2])
+
+            # Éditeur (supporte la liste de noms ou la liste d'objets)
+            pubs_obj = details.get("publishers", doc.get("publisher", []))
+            if (
+                isinstance(pubs_obj, list)
+                and pubs_obj
+                and isinstance(pubs_obj[0], dict)
+                and "name" in pubs_obj[0]
+            ):
+                publisher = ", ".join([p.get("name") for p in pubs_obj if p.get("name")])
+            else:
+                publisher = ", ".join(pubs_obj or [])
+
+            # Année/Date
+            year = (
+                details.get("publish_date")
+                or str(details.get("first_publish_year", ""))
+                or str(doc.get("first_publish_year", ""))
+            )
+
+            # Calculer un score de qualité
+            quality_score = 0
+            if title:
+                quality_score += 20
+            if authors:
+                quality_score += 20
+            if isbns:
+                quality_score += 20
+            if publisher:
+                quality_score += 20
+            if year:
+                quality_score += 20
+
+            quality_text = f"{quality_score}%"
+
+            tree.insert(
+                "", "end", values=(title, authors, lang, isbns, publisher, year, quality_text)
+            )
+
+        # Boutons
+        button_frame = ttk.Frame(main_frame)
+        button_frame.pack(fill=tk.X, pady=(10, 0))
+
+        ttk.Button(button_frame, text="Fermer", command=win.destroy).pack(side=tk.RIGHT)
+        ttk.Button(
+            button_frame,
+            text="Sélectionner cette édition",
+            command=lambda: self._select_edition_from_list(tree, docs),
+        ).pack(side=tk.LEFT)
+
+    def _select_edition_from_list(self, tree, docs):
+        """Sélectionne une édition depuis la liste des éditions disponibles."""
+        selection = tree.selection()
+        if not selection:
+            messagebox.showwarning("Attention", "Veuillez sélectionner une édition")
+            return
+
+        # Récupérer l'édition sélectionnée
+        item = tree.item(selection[0])
+        values = item["values"]
+        title = values[0]
+
+        # Trouver l'édition correspondante dans la liste
+        selected_doc = None
         for doc in docs:
-            title = doc.get("title", "")
-            authors = ", ".join(doc.get("author_name", [])) if doc.get("author_name") else ""
-            lang = ", ".join(doc.get("language", [])) if doc.get("language") else ""
-            isbns = ", ".join(doc.get("isbn", [])[:2]) if doc.get("isbn") else ""
-            publisher = ", ".join(doc.get("publisher", [])) if doc.get("publisher") else ""
-            year = doc.get("first_publish_year", "")
-            tree.insert("", "end", values=(title, authors, lang, isbns, publisher, year))
+            if doc.get("title", "") == title:
+                selected_doc = doc
+                break
 
-        ttk.Button(win, text="Fermer", command=win.destroy).pack(pady=6)
+        if not selected_doc:
+            messagebox.showerror("Erreur", "Édition non trouvée")
+            return
+
+        # Appliquer les métadonnées de l'édition sélectionnée
+        if self.current_meta:
+            self.current_meta.suggested_title = selected_doc.get("title")
+            self.current_meta.suggested_authors = selected_doc.get("author_name", [])
+            self.current_meta.suggested_publisher = ", ".join(selected_doc.get("publisher", []))
+            # Premier ISBN seulement
+            self.current_meta.suggested_isbn = ", ".join(selected_doc.get("isbn", [])[:1])
+            self.current_meta.suggested_language = ", ".join(selected_doc.get("language", []))
+            self.current_meta.suggested_publication_date = str(
+                selected_doc.get("first_publish_year", "")
+            )
+            self.current_meta.suggested_tags = selected_doc.get("subject", [])
+
+            # Mettre à jour l'affichage
+            self.refresh_tree()
+            self.on_select(None)
+
+            messagebox.showinfo("Succès", f"Édition sélectionnée : {title}")
+
+        # Fermer la fenêtre des éditions
+        tree.master.master.destroy()
 
     def fetch_suggestions_for_selected(self):
         sel = self.tree.selection()
@@ -584,21 +818,58 @@ class EnricherGUI(tk.Tk):
         if not data:
             canvas.create_rectangle(0, 0, w, h, fill="#EEE", outline="")
             canvas.create_text(
-                w // 2, h // 2, text=f"{w}x{h}", fill="#666", font=("TkDefaultFont", 10, "bold")
+                w // 2,
+                h // 2,
+                text="Aucune\ncouverture",
+                fill="#666",
+                font=("TkDefaultFont", 10, "bold"),
             )
             return
         from PIL import ImageTk
 
         try:
             pil = Image.open(BytesIO(data))
-            pil.thumbnail((w, h))
+            original_size = pil.size
+            pil.thumbnail((w, h), Image.Resampling.LANCZOS)
             img = ImageTk.PhotoImage(pil)
             canvas.image = img
             canvas.create_image(w // 2, h // 2, image=img)
+
+            # Affichage des informations de qualité
             iw, ih = pil.size
-            canvas.create_rectangle(0, h - 25, w, h, fill="#222222", outline="")
+            orig_w, orig_h = original_size
+
+            # Barre d'information en bas
+            info_height = 30
+            canvas.create_rectangle(0, h - info_height, w, h, fill="#222222", outline="")
+
+            # Taille de l'image redimensionnée
             canvas.create_text(
-                w // 2, h - 12, text=f"{iw}x{ih}", fill="white", font=("TkDefaultFont", 9, "bold")
+                w // 2, h - 20, text=f"{iw}x{ih}", fill="white", font=("TkDefaultFont", 8, "bold")
             )
+
+            # Taille originale si différente
+            if (orig_w, orig_h) != (iw, ih):
+                canvas.create_text(
+                    w // 2,
+                    h - 8,
+                    text=f"Orig: {orig_w}x{orig_h}",
+                    fill="#AAAAAA",
+                    font=("TkDefaultFont", 7),
+                )
+
+            # Indicateur de qualité
+            quality = "HD" if orig_w >= 800 and orig_h >= 1200 else "SD"
+            color = "#00FF00" if quality == "HD" else "#FFAA00"
+            canvas.create_text(10, 10, text=quality, fill=color, font=("TkDefaultFont", 8, "bold"))
+
         except Exception:
             logger.exception("Erreur rendu couverture")
+            canvas.create_rectangle(0, 0, w, h, fill="#FFEEEE", outline="")
+            canvas.create_text(
+                w // 2,
+                h // 2,
+                text="Erreur\nimage",
+                fill="#CC0000",
+                font=("TkDefaultFont", 9, "bold"),
+            )
