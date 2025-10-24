@@ -5,7 +5,7 @@ parmi les éditions alternatives trouvées sur OpenLibrary.
 """
 
 import tkinter as tk
-from tkinter import ttk, messagebox
+from tkinter import messagebox, ttk
 from typing import Callable, Dict, List
 
 
