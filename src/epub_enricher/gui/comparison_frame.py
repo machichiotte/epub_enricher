@@ -3,14 +3,21 @@
 Composant GUI pour la zone de comparaison et de sélection des métadonnées.
 """
 
+import logging
 import tkinter as tk
+from io import BytesIO
 from tkinter import ttk
 from typing import TYPE_CHECKING, Dict
+
+# Importations pour le dessin de la couverture
+from PIL import Image, ImageTk
 
 from ..config import GUI_COVER_SIZE
 
 if TYPE_CHECKING:
     from .main_window import EnricherGUI  # Importation pour le type hinting
+
+logger = logging.getLogger(__name__)
 
 
 class ComparisonFrame(ttk.LabelFrame):
@@ -134,6 +141,76 @@ class ComparisonFrame(ttk.LabelFrame):
             command=lambda: self.main_controller.choose_cover("orig"),
         ).grid(row=len(fields) + 2, column=0, columnspan=2, pady=(10, 6))
 
+    # --- NOUVELLE MÉTHODE DE DESSIN ---
+
+    def draw_cover(self, canvas: tk.Canvas, data: bytes | None):
+        """Dessine la couverture sur le canevas fourni (déplacé du contrôleur)."""
+        canvas.delete("all")
+        w, h = GUI_COVER_SIZE
+
+        if not data:
+            canvas.create_rectangle(0, 0, w, h, fill="#EEE", outline="")
+            canvas.create_text(
+                w // 2,
+                h // 2,
+                text="Aucune\ncouverture",
+                fill="#666",
+                font=("TkDefaultFont", 10, "bold"),
+            )
+            return
+
+        try:
+            # Utilisation de PIL pour charger et redimensionner l'image
+            pil = Image.open(BytesIO(data))
+            original_size = pil.size
+            # Utilisation de LANCZOS pour une meilleure qualité
+            pil.thumbnail((w, h), Image.Resampling.LANCZOS)
+
+            # Conversion en PhotoImage de Tkinter
+            img = ImageTk.PhotoImage(pil)
+
+            # Garder une référence sur le canevas pour éviter le garbage collector !
+            canvas.image = img
+            canvas.create_image(w // 2, h // 2, image=img)
+
+            # Ajout d'informations de taille
+            info_height = 30
+            canvas.create_rectangle(0, h - info_height, w, h, fill="#222222", outline="")
+
+            iw, ih = pil.size
+            orig_w, orig_h = original_size
+            canvas.create_text(
+                w // 2, h - 20, text=f"{iw}x{ih}", fill="white", font=("TkDefaultFont", 8, "bold")
+            )
+            if (orig_w, orig_h) != (iw, ih):
+                canvas.create_text(
+                    w // 2,
+                    h - 8,
+                    text=f"Orig: {orig_w}x{orig_h}",
+                    fill="#AAAAAA",
+                    font=("TkDefaultFont", 7),
+                )
+
+            # Indication de qualité (exemple)
+            quality = "HD" if orig_w >= 800 and orig_h >= 1200 else "SD"
+            color = "#00FF00" if quality == "HD" else "#FFAA00"
+            canvas.create_text(
+                10, 10, text=quality, fill=color, font=("TkDefaultFont", 8, "bold"), anchor="nw"
+            )
+
+        except Exception:
+            logger.exception("Erreur rendu couverture")
+            canvas.create_rectangle(0, 0, w, h, fill="#FFEEEE", outline="")
+            canvas.create_text(
+                w // 2,
+                h // 2,
+                text="Erreur\nimage",
+                fill="#CC0000",
+                font=("TkDefaultFont", 9, "bold"),
+            )
+
+    # --- FIN NOUVELLE MÉTHODE DE DESSIN ---
+
     def load_meta(self, meta):
         """Charge les données d'un objet EpubMeta dans les champs de comparaison."""
         if meta is None:
@@ -174,9 +251,9 @@ class ComparisonFrame(ttk.LabelFrame):
         final_text.delete(1.0, tk.END)
         final_text.insert(1.0, meta.suggested_summary or "")
 
-        # Mise à jour des couvertures (en appelant le contrôleur)
-        self.main_controller.draw_cover(self.cover_orig_canvas, meta.original_cover_data)
-        self.main_controller.draw_cover(self.cover_final_canvas, meta.suggested_cover_data)
+        # Mise à jour des couvertures (Appel de la méthode interne draw_cover)
+        self.draw_cover(self.cover_orig_canvas, meta.original_cover_data)  # CORRIGÉ
+        self.draw_cover(self.cover_final_canvas, meta.suggested_cover_data)  # CORRIGÉ
 
         self.update_comparison_colors()
 
@@ -194,9 +271,9 @@ class ComparisonFrame(ttk.LabelFrame):
 
         self.update_comparison_colors()
 
-        # Nettoyer les canvases de couverture (en appelant le contrôleur)
-        self.main_controller.draw_cover(self.cover_orig_canvas, None)
-        self.main_controller.draw_cover(self.cover_final_canvas, None)
+        # Nettoyer les canvases de couverture (Appel de la méthode interne draw_cover)
+        self.draw_cover(self.cover_orig_canvas, None)  # CORRIGÉ
+        self.draw_cover(self.cover_final_canvas, None)  # CORRIGÉ
 
     def update_comparison_colors(self):
         """Met à jour les couleurs de fond des champs de comparaison."""
@@ -226,6 +303,7 @@ class ComparisonFrame(ttk.LabelFrame):
                     final_entry.configure(style="FinalDiff.TEntry")
             else:
                 if is_text_widget:
+                    # Assurez-vous que l'état normal est rétabli pour les Text widgets
                     orig_entry.configure(background=TEXT_DEFAULT_BG)
                     final_entry.configure(background=TEXT_DEFAULT_BG)
                 else:
