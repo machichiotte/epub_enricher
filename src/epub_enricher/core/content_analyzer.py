@@ -1,3 +1,4 @@
+# epub_enricher/src/epub_enricher/core/content_analyzer.py
 """
 Analyse avancée du contenu EPUB pour extraire des métadonnées supplémentaires
 """
