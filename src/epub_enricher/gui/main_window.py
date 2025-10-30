@@ -91,9 +91,15 @@ class EnricherGUI(tk.Tk):
             "status": {"width": 90, "anchor": "w"},
         }
         for c in cols:
-            self.tree.heading(c, text=c.replace("_", " ").capitalize())
+            # Lier l'en-tête de colonne à la méthode de tri
+            self.tree.heading(
+                c,
+                text=c.replace("_", " ").capitalize(),
+                command=lambda col=c: self.sort_treeview_column(self.tree, col, False),
+            )
             config = column_configs.get(c, {"width": 120, "anchor": "w"})
             self.tree.column(c, width=config["width"], anchor=config["anchor"])
+
         self.tree.pack(fill=tk.BOTH, expand=True, padx=6)
         self.tree.bind("<<TreeviewSelect>>", self.on_select)
 
@@ -237,6 +243,44 @@ class EnricherGUI(tk.Tk):
                 self.tree.selection_set(selected_ids)
             except tk.TclError:
                 pass
+
+    # Ajoutez cette méthode dans la classe EnricherGUI (par exemple après self.refresh_tree)
+    def sort_treeview_column(self, tree, col, reverse):
+        """
+        Trie les données du Treeview par la colonne spécifiée.
+
+        L'ordre de tri est basé sur la valeur de la colonne pour chaque élément,
+        en s'assurant que les valeurs sont correctement comparables (chaîne vs nombre).
+        """
+        data = [(tree.set(child, col), child) for child in tree.get_children("")]
+
+        # Fonction de conversion/clé pour la comparaison
+        def convert_key(item):
+            value = item[0]
+            # Tente de convertir en nombre si c'est un score de qualité
+            if col == "status" and "(" in value:
+                try:
+                    return int(value.split("(")[1].split("%")[0])
+                except (ValueError, IndexError):
+                    return value
+            # Tente de convertir en nombre s'il est numérique
+            try:
+                return float(value)
+            except ValueError:
+                return value.lower()  # Sinon, trier en tant que chaîne de caractères
+
+        # Tri de la liste
+        data.sort(key=convert_key, reverse=reverse)
+
+        # Réarrangement des éléments dans le Treeview
+        for index, (val, child) in enumerate(data):
+            tree.move(child, "", index)
+
+        # Inverser la direction de tri pour le prochain clic
+        tree.heading(
+            col,
+            command=lambda c=col: self.sort_treeview_column(tree, c, not reverse),
+        )
 
     def _get_tree_values_for_meta(self, m: EpubMeta, quality_score: int) -> tuple:
         """Helper interne pour formater les valeurs du Treeview."""

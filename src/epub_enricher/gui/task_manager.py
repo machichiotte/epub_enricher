@@ -8,7 +8,7 @@ import logging
 import threading
 from typing import TYPE_CHECKING, Dict, List
 
-from ..core.epub_processor import update_epub_with_metadata
+from ..core.epub_processor import rename_epub_file, update_epub_with_metadata
 from ..core.metadata_fetcher import download_cover, fetch_genre_and_summary, query_openlibrary_full
 from . import helpers
 
@@ -129,6 +129,7 @@ def _apply_worker(app: "EnricherGUI", metas: List["EpubMeta"]):
                 # Utiliser l'helper pour nettoyer le modèle
                 helpers.apply_suggestions_to_model(m)
                 helpers.reset_suggestions_on_model(m)
+                rename_epub_file(m)
                 any_changed = True
             else:
                 m.note = m.note or "Failed"
