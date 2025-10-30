@@ -53,8 +53,10 @@ class EnricherGUI(tk.Tk):
         frm_top.pack(fill=tk.X, padx=6, pady=6)
         self.folder_var = tk.StringVar()
         ttk.Entry(frm_top, textvariable=self.folder_var, width=80).pack(side=tk.LEFT, padx=4)
-        ttk.Button(frm_top, text="Select folder", command=self.select_folder).pack(side=tk.LEFT)
-        ttk.Button(frm_top, text="Scan", command=self.scan_folder).pack(side=tk.LEFT, padx=4)
+        ttk.Button(frm_top, text="Select & Scan Folder", command=self.select_and_scan_folder).pack(
+            side=tk.LEFT, padx=4
+        )
+
         ttk.Button(
             frm_top, text="Fetch suggestions", command=self.fetch_suggestions_for_selected
         ).pack(side=tk.LEFT, padx=4)
@@ -121,11 +123,22 @@ class EnricherGUI(tk.Tk):
         ttk.Button(right, text="Save CSV", command=self.export_csv).pack(fill=tk.X, padx=4, pady=8)
 
     # --- Actions (Orchestration) ---
+    def select_and_scan_folder(self):
+        """Combine la sélection et le scan du dossier en une seule action."""
+        folder = filedialog.askdirectory()
+        if not folder:
+            return  # Annulé par l'utilisateur
+        self.folder_var.set(folder)
 
-    def select_folder(self):
-        d = filedialog.askdirectory()
-        if d:
-            self.folder_var.set(d)
+        if not os.path.isdir(folder):
+            self.show_error_message("Error", "Select a valid folder first")
+            return
+
+        try:
+            self.scan_folder()
+        except Exception as e:
+            logger.exception("Failed to scan folder")
+            self.show_error_message("Error", f"An error occurred while scanning: {e}")
 
     def scan_folder(self):
         folder = self.folder_var.get()
