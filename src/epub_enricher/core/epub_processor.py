@@ -9,11 +9,14 @@ import re
 import shutil
 import time
 import traceback
+from pathlib import Path
 from typing import Dict, List
 
 from ebooklib import epub
 from isbnlib import canonical, is_isbn10, is_isbn13
 from langdetect import detect
+
+from epub_enricher.core.models import EpubMeta
 
 from ..config import (
     BACKUP_DIR,
@@ -297,3 +300,52 @@ def update_epub_with_metadata(epub_path: str, meta) -> bool:
         meta.note = f"Error updating epub: {e}\n{traceback.format_exc()}"
         logger.exception("Error updating epub %s", epub_path)
         return False
+
+
+def sanitize_filename(value: str) -> str:
+    """Nettoie un texte pour un nom de fichier valide."""
+    value = re.sub(r'[\\/*?:"<>|]', "", value)
+    value = re.sub(r"\s+", " ", value)
+    return value.strip()
+
+
+def rename_epub_file(meta: "EpubMeta") -> None:
+    """Renomme le fichier EPUB en fonction des métadonnées."""
+    try:
+        epub_path = Path(meta.path)
+        folder = epub_path.parent
+
+        # Priorité : métadonnées suggérées > originales
+        year = str(meta.suggested_publication_date or meta.original_publication_date or "unknown")
+        authors = meta.suggested_authors or meta.original_authors or "Unknown"
+        title = meta.suggested_title or meta.original_title or epub_path.stem
+
+        # Conversion si liste d’auteurs
+        if isinstance(authors, list):
+            authors = ", ".join(authors[:2])  # on limite à 2 pour éviter les noms trop longs
+
+        # Nettoyage des champs
+        year = sanitize_filename(year)
+        authors = sanitize_filename(authors)
+        title = sanitize_filename(title)
+
+        # Construction du nouveau nom
+        new_name = f"{year} - {authors} - {title}.epub"
+        new_path = folder / new_name
+
+        # Éviter les collisions
+        counter = 1
+        while new_path.exists():
+            new_path = folder / f"{year} - {authors} - {title} ({counter}).epub"
+            counter += 1
+
+        # Renommage
+        epub_path.rename(new_path)
+
+        # Mettre à jour le modèle
+        meta.path = str(new_path)
+        meta.filename = new_name
+
+        logger.info("Renamed EPUB: %s -> %s", epub_path.name, new_name)
+    except Exception as e:
+        logger.warning("Failed to rename EPUB %s: %s", meta.filename, e)

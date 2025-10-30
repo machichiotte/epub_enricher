@@ -25,4 +25,5 @@ htmlcov/
 logs/
 
 # Other
+backups/
 TODO.md
