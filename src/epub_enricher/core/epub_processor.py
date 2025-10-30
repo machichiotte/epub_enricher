@@ -316,7 +316,7 @@ def rename_epub_file(meta: "EpubMeta") -> None:
         folder = epub_path.parent
 
         # Priorité : métadonnées suggérées > originales
-        year = str(meta.suggested_publication_date or meta.original_publication_date or "unknown")
+        year_raw = meta.suggested_publication_date or meta.original_publication_date or "unknown"
         authors = meta.suggested_authors or meta.original_authors or "Unknown"
         title = meta.suggested_title or meta.original_title or epub_path.stem
 
@@ -325,12 +325,17 @@ def rename_epub_file(meta: "EpubMeta") -> None:
             authors = ", ".join(authors[:2])  # on limite à 2 pour éviter les noms trop longs
 
         # Nettoyage des champs
-        year = sanitize_filename(year)
         authors = sanitize_filename(authors)
         title = sanitize_filename(title)
 
+        # NOUVEAU: Gérer l'année de manière optionnelle
+        year_part = ""
+        if year_raw:
+            year = sanitize_filename(str(year_raw))
+            year_part = f"{year} - "
+
         # Construction du nouveau nom
-        new_name = f"{year} - {authors} - {title}.epub"
+        new_name = f"{year_part}{authors} - {title}.epub"
         new_path = folder / new_name
 
         # Éviter les collisions
