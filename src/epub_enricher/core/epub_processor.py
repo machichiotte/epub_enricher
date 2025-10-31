@@ -129,12 +129,27 @@ def extract_metadata(epub_path: str) -> Dict:
                     cover_item = book.get_item_with_id(cover_id)
                     logger.debug("Cover found via OPF metadata for %s", epub_path)
 
+        # MÉTHODE 3 (BRUTE-FORCE) : Si toujours rien, chercher la 1ère image
+        if not cover_item:
+            logger.debug("Standard cover methods failed. Trying brute-force image search...")
+            images = list(book.get_items_of_type(epub.ITEM_IMAGE))
+            if images:
+                # On trie pour prioriser les noms évidents
+                images.sort(
+                    key=lambda x: (
+                        0
+                        if "cover" in x.get_name().lower()
+                        else 1 if "couv" in x.get_name().lower() else 2
+                    )
+                )
+                cover_item = images[0]  # On prend la meilleure correspondance
+                logger.info("Cover found via brute-force: %s", cover_item.get_name())
+
         if cover_item:
             data["cover_data"] = cover_item.get_content()
             logger.debug("Cover image data extracted successfully for %s", epub_path)
         else:
-            # NOUVEAU LOG : Indique qu'aucune couverture n'a été trouvée
-            logger.info("No standard cover found for %s", epub_path)
+            logger.info("No cover found (standard or brute-force) for %s", epub_path)
 
     except Exception:
         logger.debug("Could not extract cover image for %s", epub_path)
@@ -163,9 +178,9 @@ def extract_metadata(epub_path: str) -> Dict:
         except Exception:
             logger.debug("Text ISBN search failed for %s", epub_path)
 
-    # NOUVEAU : Analyse avancée du contenu
+    # MODIFIÉ : Analyse avancée du contenu (passe l'objet 'book')
     try:
-        advanced_data = extract_advanced_metadata(epub_path)
+        advanced_data = extract_advanced_metadata(book)
         data.update(advanced_data)
         logger.info(
             (
@@ -192,56 +207,6 @@ def extract_metadata(epub_path: str) -> Dict:
 
 
 def update_epub_with_metadata(epub_path: str, meta) -> bool:
-    """Met à jour un fichier EPUB avec les nouvelles métadonnées."""
-    try:
-        backup_file(epub_path)
-    except Exception as e:
-        meta.note = f"Backup failed: {e}"
-        logger.exception("Backup failed for %s", epub_path)
-        return False
-
-    try:
-        book = epub.read_epub(epub_path)
-
-        if meta.suggested_title:
-            try:
-                book.set_title(meta.suggested_title)
-            except Exception:
-                logger.exception("Failed to set title for %s", epub_path)
-
-        if meta.suggested_authors:
-            try:
-                book.del_metadata("DC", "creator")
-                for a in meta.suggested_authors:
-                    book.add_author(a)
-            except Exception:
-                logger.exception("Failed to set authors for %s", epub_path)
-
-        if meta.suggested_isbn:
-            try:
-                book.set_identifier(meta.suggested_isbn)
-            except Exception:
-                logger.exception("Failed to set identifier for %s", epub_path)
-
-        if meta.suggested_language:
-            try:
-                book.set_language(meta.suggested_language)
-            except Exception:
-                logger.exception("Failed to set language for %s", epub_path)
-
-        if meta.suggested_cover_data:
-            try:
-                book.set_cover("cover.jpg", meta.suggested_cover_data)
-            except Exception:
-                logger.exception("Failed to set cover for %s", epub_path)
-
-        epub.write_epub(epub_path, book)
-        logger.info("Updated EPUB %s with suggested metadata", epub_path)
-        return True
-    except Exception as e:
-        meta.note = f"Error updating epub: {e}\n{traceback.format_exc()}"
-        logger.exception("Error updating epub %s", epub_path)
-        return False
     """Met à jour un fichier EPUB avec les nouvelles métadonnées."""
     try:
         backup_file(epub_path)

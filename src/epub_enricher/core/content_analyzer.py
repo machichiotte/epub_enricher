@@ -14,9 +14,10 @@ from ..config import ISBN_RE
 logger = logging.getLogger(__name__)
 
 
-def extract_advanced_metadata(epub_path: str) -> Dict:
+def extract_advanced_metadata(book: epub.EpubBook) -> Dict:
     """
     Extrait des métadonnées avancées depuis le contenu EPUB.
+    (Modifié pour accepter un objet book au lieu d'un path)
 
     Returns:
         Dict contenant les métadonnées extraites du contenu
@@ -31,7 +32,7 @@ def extract_advanced_metadata(epub_path: str) -> Dict:
         "content_analysis": {},
     }
 
-    book = _safe_read_epub(epub_path)
+    # book = _safe_read_epub(epub_path) # SUPPRIMÉ : Le livre est déjà lu
     if not book:
         return data
 
@@ -58,13 +59,12 @@ def extract_advanced_metadata(epub_path: str) -> Dict:
         data["content_analysis"] = _analyze_content_structure(book)
 
         logger.info(
-            "Extracted advanced metadata for %s: %d fields",
-            epub_path,
+            "Extracted advanced metadata: %d fields",
             len([k for k, v in data.items() if v]),
         )
 
     except Exception as e:
-        logger.exception(f"Error extracting advanced metadata from {epub_path}: {e}")
+        logger.exception(f"Error extracting advanced metadata: {e}")
 
     return data
 
