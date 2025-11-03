@@ -72,8 +72,10 @@ def reset_suggestions_on_model(m: "EpubMeta"):
     m.suggested_cover_data = None
     m.suggested_genre = None
     m.suggested_summary = None
-    m.accepted = False
-    m.processed = False
+    m.accepted = False  # Nettoyage
+    m.processed = False  # Réinitialise aussi le statut 'fetched'
+    m.found_editions = []  # Vide la liste des éditions
+    m.note = ""
 
 
 def export_to_csv(filepath: str, meta_list: List["EpubMeta"]):

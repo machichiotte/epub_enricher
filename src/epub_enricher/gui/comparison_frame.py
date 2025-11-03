@@ -7,7 +7,7 @@ import logging
 import tkinter as tk
 from io import BytesIO
 from tkinter import ttk
-from typing import TYPE_CHECKING, Dict
+from typing import TYPE_CHECKING, Dict, List, Union
 
 # Importations pour le dessin de la couverture
 from PIL import Image, ImageTk
@@ -15,6 +15,7 @@ from PIL import Image, ImageTk
 from ..config import GUI_COVER_SIZE
 
 if TYPE_CHECKING:
+    from ..core.models import EpubMeta  # Importer EpubMeta
     from .main_window import EnricherGUI  # Importation pour le type hinting
 
 logger = logging.getLogger(__name__)
@@ -22,13 +23,15 @@ logger = logging.getLogger(__name__)
 
 class ComparisonFrame(ttk.LabelFrame):
     """
-    Frame contenant les vues "Original", "Final" et les couvertures
-    pour la comparaison des métadonnées.
+    Frame contenant les vues "Original", "Final", les couvertures
+    ET la liste des éditions pour la comparaison des métadonnées.
     """
 
     def __init__(self, master, main_controller: "EnricherGUI", **kwargs):
         super().__init__(master, text="Comparaison et Sélection", **kwargs)
         self.main_controller = main_controller  # Référence vers la fenêtre principale
+        self.current_meta: Union["EpubMeta", None] = None  # Garder une référence au méta actuel
+        self.editions_tree: Union[ttk.Treeview, None] = None  # Le nouveau Treeview
 
         self.detail_vars: Dict[str, Dict[str, tk.StringVar]] = {}
         self.detail_entries: Dict[str, Dict[str, ttk.Entry | tk.Text]] = {}
@@ -98,7 +101,9 @@ class ComparisonFrame(ttk.LabelFrame):
             "summary",
             "tags",
         ]
+        row_idx = 0
         for i, field in enumerate(fields, start=1):
+            row_idx = i  # Garder une trace de la ligne actuelle
             field_label = field.replace("_", " ").capitalize()
             ttk.Label(self, text=field_label).grid(row=i, column=1, padx=5, pady=5, sticky="w")
 
@@ -139,12 +144,52 @@ class ComparisonFrame(ttk.LabelFrame):
             self,
             text="Utiliser cette couverture →",
             command=lambda: self.main_controller.choose_cover("orig"),
-        ).grid(row=len(fields) + 2, column=0, columnspan=2, pady=(10, 6))
+        ).grid(row=row_idx + 1, column=0, columnspan=2, pady=(10, 6))
 
-    # --- NOUVELLE MÉTHODE DE DESSIN ---
+        # --- NOUVEAU: Cadre pour la liste des éditions ---
+        editions_frame = ttk.LabelFrame(self, text="Éditions trouvées (OpenLibrary)")
+        editions_frame.grid(
+            row=row_idx + 2,  # Après le bouton de couverture
+            column=1,
+            columnspan=4,  # S'étend sur les colonnes du milieu
+            sticky="ew",
+            padx=5,
+            pady=(10, 5),
+        )
+        editions_frame.columnconfigure(0, weight=1)
 
-    def draw_cover(self, canvas: tk.Canvas, data: bytes | None):
-        """Dessine la couverture sur le canevas fourni (déplacé du contrôleur)."""
+        cols = ("title", "authors", "isbn", "year", "quality")
+        self.editions_tree = ttk.Treeview(editions_frame, columns=cols, show="headings", height=5)
+
+        column_configs = {
+            "title": {"width": 250, "anchor": "w"},
+            "authors": {"width": 200, "anchor": "w"},
+            "isbn": {"width": 120, "anchor": "w"},
+            "year": {"width": 80, "anchor": "w"},
+            "quality": {"width": 80, "anchor": "w"},
+        }
+
+        for c in cols:
+            self.editions_tree.heading(c, text=c.capitalize())
+            config = column_configs.get(c, {"width": 120, "anchor": "w"})
+            self.editions_tree.column(c, width=config["width"], anchor=config["anchor"])
+
+        scrollbar = ttk.Scrollbar(
+            editions_frame, orient=tk.VERTICAL, command=self.editions_tree.yview
+        )
+        self.editions_tree.configure(yscrollcommand=scrollbar.set)
+
+        self.editions_tree.grid(row=0, column=0, sticky="ewns")
+        scrollbar.grid(row=0, column=1, sticky="ns")
+        editions_frame.rowconfigure(0, weight=1)
+
+        # Lier la sélection
+        self.editions_tree.bind("<<TreeviewSelect>>", self._on_edition_selected_from_tree)
+
+    # --- MÉTHODE DE DESSIN DE COUVERTURE ---
+    # (Aucun changement requis ici)
+    def draw_cover(self, canvas: tk.Canvas, data: Union[bytes, None]):
+        """Dessine la couverture sur le canevas fourni."""
         canvas.delete("all")
         w, h = GUI_COVER_SIZE
 
@@ -160,23 +205,14 @@ class ComparisonFrame(ttk.LabelFrame):
             return
 
         try:
-            # Utilisation de PIL pour charger et redimensionner l'image
             pil = Image.open(BytesIO(data))
             original_size = pil.size
-            # Utilisation de LANCZOS pour une meilleure qualité
             pil.thumbnail((w, h), Image.Resampling.LANCZOS)
-
-            # Conversion en PhotoImage de Tkinter
             img = ImageTk.PhotoImage(pil)
-
-            # Garder une référence sur le canevas pour éviter le garbage collector !
             canvas.image = img
             canvas.create_image(w // 2, h // 2, image=img)
-
-            # Ajout d'informations de taille
             info_height = 30
             canvas.create_rectangle(0, h - info_height, w, h, fill="#222222", outline="")
-
             iw, ih = pil.size
             orig_w, orig_h = original_size
             canvas.create_text(
@@ -190,14 +226,11 @@ class ComparisonFrame(ttk.LabelFrame):
                     fill="#AAAAAA",
                     font=("TkDefaultFont", 7),
                 )
-
-            # Indication de qualité (exemple)
             quality = "HD" if orig_w >= 800 and orig_h >= 1200 else "SD"
             color = "#00FF00" if quality == "HD" else "#FFAA00"
             canvas.create_text(
                 10, 10, text=quality, fill=color, font=("TkDefaultFont", 8, "bold"), anchor="nw"
             )
-
         except Exception:
             logger.exception("Erreur rendu couverture")
             canvas.create_rectangle(0, 0, w, h, fill="#FFEEEE", outline="")
@@ -209,10 +242,12 @@ class ComparisonFrame(ttk.LabelFrame):
                 font=("TkDefaultFont", 9, "bold"),
             )
 
-    # --- FIN NOUVELLE MÉTHODE DE DESSIN ---
+    # --- CHARGEMENT / SAUVEGARDE ---
 
-    def load_meta(self, meta):
+    def load_meta(self, meta: Union["EpubMeta", None]):
         """Charge les données d'un objet EpubMeta dans les champs de comparaison."""
+        self.current_meta = meta  # Stocker la référence
+
         if meta is None:
             self.clear_details()
             return
@@ -230,7 +265,7 @@ class ComparisonFrame(ttk.LabelFrame):
         self.detail_vars["tags"]["orig"].set(format_list(meta.original_tags))
         self.detail_vars["genre"]["orig"].set(meta.content_genre or "")
 
-        # Valeurs suggérées
+        # Valeurs suggérées (celles-ci sont la "source de vérité" pour les champs finaux)
         self.detail_vars["title"]["final"].set(meta.suggested_title or "")
         self.detail_vars["authors"]["final"].set(format_list(meta.suggested_authors))
         self.detail_vars["publisher"]["final"].set(meta.suggested_publisher or "")
@@ -251,14 +286,18 @@ class ComparisonFrame(ttk.LabelFrame):
         final_text.delete(1.0, tk.END)
         final_text.insert(1.0, meta.suggested_summary or "")
 
-        # Mise à jour des couvertures (Appel de la méthode interne draw_cover)
-        self.draw_cover(self.cover_orig_canvas, meta.original_cover_data)  # CORRIGÉ
-        self.draw_cover(self.cover_final_canvas, meta.suggested_cover_data)  # CORRIGÉ
+        # Mise à jour des couvertures
+        self.draw_cover(self.cover_orig_canvas, meta.original_cover_data)
+        self.draw_cover(self.cover_final_canvas, meta.suggested_cover_data)
+
+        # NOUVEAU: Remplir l'arbre des éditions
+        self._populate_editions_tree(meta)
 
         self.update_comparison_colors()
 
     def clear_details(self):
         """Vide les champs de la vue détaillée et les couvertures."""
+        self.current_meta = None  # Vider la référence
         for field_vars in self.detail_vars.values():
             field_vars["orig"].set("")
             field_vars["final"].set("")
@@ -271,10 +310,42 @@ class ComparisonFrame(ttk.LabelFrame):
 
         self.update_comparison_colors()
 
-        # Nettoyer les canvases de couverture (Appel de la méthode interne draw_cover)
-        self.draw_cover(self.cover_orig_canvas, None)  # CORRIGÉ
-        self.draw_cover(self.cover_final_canvas, None)  # CORRIGÉ
+        # Nettoyer les canvases de couverture
+        self.draw_cover(self.cover_orig_canvas, None)
+        self.draw_cover(self.cover_final_canvas, None)
 
+        # NOUVEAU: Vider l'arbre des éditions
+        if self.editions_tree:
+            self._populate_editions_tree(None)
+
+    def save_final_values_to_model(self):
+        """
+        Sauvegarde les valeurs actuelles des champs 'final' (StringVars)
+        vers l'objet self.current_meta.
+        """
+        if not self.current_meta:
+            return
+
+        meta = self.current_meta
+
+        def to_list(val: str) -> List[str]:
+            return [v.strip() for v in val.split(",")] if val else []
+
+        meta.suggested_title = self.detail_vars["title"]["final"].get()
+        meta.suggested_authors = to_list(self.detail_vars["authors"]["final"].get())
+        meta.suggested_publisher = self.detail_vars["publisher"]["final"].get()
+        meta.suggested_isbn = self.detail_vars["isbn"]["final"].get()
+        meta.suggested_language = self.detail_vars["language"]["final"].get()
+        meta.suggested_publication_date = self.detail_vars["publication_date"]["final"].get()
+        meta.suggested_genre = self.detail_vars["genre"]["final"].get()
+        meta.suggested_tags = to_list(self.detail_vars["tags"]["final"].get())
+
+        # Gestion spéciale du résumé (zone de texte)
+        meta.suggested_summary = self.detail_entries["summary"]["final"].get(1.0, tk.END).strip()
+
+        logger.debug("Saved final values from GUI to model for %s", meta.filename)
+
+    # (Aucun changement à update_comparison_colors)
     def update_comparison_colors(self):
         """Met à jour les couleurs de fond des champs de comparaison."""
         style = ttk.Style()
@@ -303,9 +374,177 @@ class ComparisonFrame(ttk.LabelFrame):
                     final_entry.configure(style="FinalDiff.TEntry")
             else:
                 if is_text_widget:
-                    # Assurez-vous que l'état normal est rétabli pour les Text widgets
                     orig_entry.configure(background=TEXT_DEFAULT_BG)
                     final_entry.configure(background=TEXT_DEFAULT_BG)
                 else:
                     orig_entry.configure(style="TEntry")
                     final_entry.configure(style="TEntry")
+
+    # --- NOUVELLES MÉTHODES DE GESTION DES ÉDITIONS ---
+
+    def _populate_editions_tree(self, meta: Union["EpubMeta", None]):
+        """Remplit l'arbre des éditions (logique copiée de EditionsWindow)."""
+        if not self.editions_tree:
+            return
+        self.editions_tree.delete(*self.editions_tree.get_children())
+
+        if not meta or not hasattr(meta, "found_editions") or not meta.found_editions:
+            self.editions_tree.insert(
+                "", "end", iid="0", values=("Aucune autre édition trouvée.", "", "", "", "")
+            )
+            return
+
+        for i, doc in enumerate(meta.found_editions):
+            details = doc.get("edition_details") or doc.get("work_details") or doc
+            title = details.get("title", doc.get("title", ""))
+
+            authors_list = (
+                details.get("author_name")
+                or (
+                    [a["name"] for a in details["authors"]]
+                    if isinstance(details.get("authors"), list)
+                    and details["authors"]
+                    and isinstance(details["authors"][0], dict)
+                    and "name" in details["authors"][0]
+                    else []
+                )
+                or doc.get("author_name")
+            )
+            authors = ", ".join(authors_list or [])
+
+            isbn_list = details.get("isbn_13", []) + details.get("isbn_10", [])
+            isbns = ", ".join(isbn_list[:2] or doc.get("isbn", [])[:2])
+
+            year = (
+                details.get("publish_date")
+                or str(details.get("first_publish_year", ""))
+                or str(doc.get("first_publish_year", ""))
+            )
+
+            quality_score = 0
+            if title:
+                quality_score += 20
+            if authors:
+                quality_score += 20
+            if isbns:
+                quality_score += 20
+            if details.get("publishers") or doc.get("publisher"):
+                quality_score += 20
+            if year:
+                quality_score += 20
+            quality_text = f"{quality_score}%"
+
+            # Utiliser l'index 'i' comme IID
+            self.editions_tree.insert(
+                "",
+                "end",
+                iid=str(i),
+                values=(title, authors, isbns, year, quality_text),
+            )
+
+    def _on_edition_selected_from_tree(self, event=None):
+        """Appelé lors de la sélection d'une édition dans l'arbre."""
+        if not self.current_meta:
+            return
+
+        selection = self.editions_tree.selection()
+        if not selection:
+            return
+
+        selected_index = int(selection[0])
+        if not hasattr(self.current_meta, "found_editions") or selected_index >= len(
+            self.current_meta.found_editions
+        ):
+            logger.warning("Index d'édition non valide ou 'found_editions' manquant.")
+            return
+
+        selected_doc = self.current_meta.found_editions[selected_index]
+
+        # Appliquer ce doc aux champs 'final' (les StringVars)
+        self._apply_doc_to_final_fields(selected_doc)
+
+        # Mettre à jour les couleurs
+        self.update_comparison_colors()
+
+        # Demander au contrôleur principal de retélécharger la couverture
+        if self.current_meta.suggested_cover_url:
+            self.main_controller._update_cover_for_edition(self.current_meta)
+
+    def _apply_doc_to_final_fields(self, doc: Dict):
+        """
+        Applique un dictionnaire (doc OpenLibrary) aux champs 'final' (StringVars).
+        Ne modifie pas le modèle directement, sauf pour l'URL de la couverture.
+        """
+        if not self.current_meta:
+            return
+
+        meta = self.current_meta  # Nécessaire pour mettre à jour l'URL de la couverture
+
+        # Logique copiée de editions_window.py pour parser le 'doc'
+        details = doc.get("edition_details") or doc.get("work_details") or doc
+        title = details.get("title", doc.get("title", ""))
+
+        authors_list = (
+            details.get("author_name")
+            or (
+                [a["name"] for a in details["authors"]]
+                if isinstance(details.get("authors"), list)
+                and details["authors"]
+                and isinstance(details["authors"][0], dict)
+                and "name" in details["authors"][0]
+                else []
+            )
+            or doc.get("author_name")
+        )
+
+        langs_obj = details.get("languages", doc.get("language", []))
+        if (
+            isinstance(langs_obj, list)
+            and langs_obj
+            and isinstance(langs_obj[0], dict)
+            and "key" in langs_obj[0]
+        ):
+            lang = ", ".join(
+                [
+                    lang_item.get("key", "").split("/")[-1]
+                    for lang_item in langs_obj
+                    if lang_item.get("key")
+                ]
+            )
+        else:
+            lang = ", ".join(langs_obj or [])
+
+        isbn_list = details.get("isbn_13", []) + details.get("isbn_10", [])
+        isbns = ", ".join(isbn_list[:1] or doc.get("isbn", [])[:1])  # Prendre 1 seul ISBN
+
+        pubs_obj = details.get("publishers", doc.get("publisher", []))
+        if (
+            isinstance(pubs_obj, list)
+            and pubs_obj
+            and isinstance(pubs_obj[0], dict)
+            and "name" in pubs_obj[0]
+        ):
+            publisher = ", ".join([p.get("name") for p in pubs_obj if p.get("name")])
+        else:
+            publisher = ", ".join(pubs_obj or [])
+
+        year = (
+            details.get("publish_date")
+            or str(details.get("first_publish_year", ""))
+            or str(doc.get("first_publish_year", ""))
+        )
+
+        tags = details.get("subject", doc.get("subject", []))
+        cover_url = details.get("cover", doc.get("cover"))
+
+        # Mettre à jour les variables Tkinter (champs "final")
+        self.detail_vars["title"]["final"].set(title or "")
+        self.detail_vars["authors"]["final"].set(", ".join(authors_list or []))
+        self.detail_vars["publisher"]["final"].set(publisher or "")
+        self.detail_vars["isbn"]["final"].set(isbns or "")
+        self.detail_vars["language"]["final"].set(lang or "")
+        self.detail_vars["publication_date"]["final"].set(year or "")
+        self.detail_vars["tags"]["final"].set(", ".join(tags or []))
+
+        # Mettre à jour l'URL de couverture sur le modèle pour le téléchargement
+        meta.suggested_cover_url = cover_url

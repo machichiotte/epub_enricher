@@ -2,81 +2,89 @@
 
 Ce module contient l'implémentation de l'interface utilisateur graphique (GUI) de l'outil **EPUB Enricher** en utilisant la bibliothèque standard **Tkinter** de Python.
 
-Cette interface permet aux utilisateurs de **scanner** un dossier contenant des fichiers EPUB, de **visualiser** les métadonnées originales, de **récupérer des suggestions** de métadonnées (titre, auteurs, couverture, etc.) via l'API OpenLibrary, de **comparer** les informations, et d'**appliquer** les enrichissements choisis.
+Cette interface permet aux utilisateurs de **scanner** un dossier contenant des fichiers EPUB, de **visualiser** les métadonnées originales, de **récupérer des suggestions** d'éditions via l'API OpenLibrary, et d'**éditer** puis **appliquer** les enrichissements choisis.
 
 ---
 
 ### Structure des Fichiers
 
-| Fichier                   | Description                                                                                                                       |
-| :------------------------ | :-------------------------------------------------------------------------------------------------------------------------------- |
-| **`__init__.py`**         | Marque ce répertoire comme un paquet Python.                                                                                      |
-| **`main_window.py`**      | Contient la classe principale **`EnricherGUI`**, l'orchestrateur de l'interface utilisateur.                                      |
-| **`comparison_frame.py`** | **Nouveau** : Implémente le panneau de comparaison visuelle (Original vs. Suggestion) des métadonnées et des couvertures.         |
-| **`editions_window.py`**  | **Nouveau** : Fenêtre modale pour afficher la liste des éditions alternatives trouvées sur OpenLibrary et permettre la sélection. |
-| **`task_manager.py`**     | **Nouveau** : Gère l'exécution des tâches de fond (fetch de suggestions, application) dans des threads séparés.                   |
-| **`helpers.py`**          | **Nouveau** : Contient des fonctions utilitaires, notamment pour la manipulation des modèles de données et l'export CSV.          |
+| Fichier                   | Description                                                                                                                |
+| :------------------------ | :------------------------------------------------------------------------------------------------------------------------- |
+| **`__init__.py`**         | Marque ce répertoire comme un paquet Python.                                                                               |
+| **`main_window.py`**      | Contient la classe principale **`EnricherGUI`**, l'orchestrateur de l'interface utilisateur.                               |
+| **`comparison_frame.py`** | Implémente le panneau d'édition (Original vs. Final) et la liste des éditions alternatives trouvées pour sélection.        |
+| ~~`editions_window.py`~~  | (Obsolète) La logique est désormais intégrée dans `comparison_frame.py`.                                                   |
+| **`task_manager.py`**     | Gère l'exécution des tâches de fond (fetch de suggestions, application) dans des threads séparés pour ne pas bloquer l'UI. |
+| **`helpers.py`**          | Contient des fonctions utilitaires (calcul de score, manipulation du modèle de données, export CSV).                       |
 
 ---
 
 ### `main_window.py`: Fonctionnalités Clés (Orchestrateur)
 
-La classe `EnricherGUI` est responsable de la gestion de l'ensemble de l'expérience utilisateur et délègue les logiques complexes :
+La classe `EnricherGUI` gère l'expérience utilisateur et délègue les logiques complexes.
 
 #### 1. Gestion des EPUBs et Affichage (Treeview)
 
--   **Sélection et Scan** : Les méthodes `select_folder` et `scan_folder` permettent de charger une liste de fichiers EPUB et d'en extraire les métadonnées originales.
--   **`refresh_tree`** : Met à jour la liste principale (`ttk.Treeview`) affichant l'état de chaque fichier (nom, titre, auteurs, statut, **score de qualité**).
+-   **`select_and_scan_folder`** : Charge une liste de fichiers EPUB et extrait les métadonnées originales (`original_...`).
+-   **`refresh_tree`** : Met à jour la liste principale (`ttk.Treeview`). La liste affiche l'état **final** (les valeurs `suggested_...` si elles existent, sinon les `original_...`).
 
-#### 2. Zone de Comparaison et Détail (via `ComparisonFrame`)
+#### 2. Zone d'Édition et de Sélection (via `ComparisonFrame`)
 
--   **`on_select`** : Charge les métadonnées **originales** et **suggérées** de l'EPUB sélectionné dans le `ComparisonFrame`.
--   **`choose_field`** et **`choose_cover`** : Permettent de copier la valeur originale vers le champ suggéré final.
+-   **`on_select`** : Charge les métadonnées dans le `ComparisonFrame`.
+    -   La colonne **"Original"** (non éditable) affiche les données lues du fichier EPUB.
+    -   La colonne **"Valeur à appliquer"** (éditable) affiche les données `suggested_...` du modèle.
+-   **`save_final_values_to_model` (appelé par `on_select` ou `apply`)** : Sauvegarde toute modification manuelle dans la colonne "Valeur à appliquer" vers le modèle `EpubMeta` (`suggested_...`).
 
-#### 3. Récupération et Application des Suggestions (via `task_manager.py`)
+#### 3. Flux de Travail d'Enrichissement (Nouveau Workflow)
 
--   **`fetch_suggestions_for_selected`** : **Délègue** la recherche de suggestions à `task_manager.start_fetch_task`.
-    -   Les éditions alternatives trouvées sont affichées via **`launch_editions_window`**, qui utilise `EditionsWindow`.
--   **`accept_selected`** / **`reject_selected`** : Marque l'état pour application ou réinitialise les suggestions (**via `helpers.py`**).
--   **`apply_accepted`** : **Délègue** le processus de modification des fichiers à `task_manager.start_apply_task`.
+1.  **`fetch_suggestions_for_selected`** (via `task_manager.py`):
 
-#### 4. Gestion de la Vue et Export
+    -   Interroge OpenLibrary et d'autres APIs.
+    -   Stocke **toutes** les éditions trouvées dans `meta.found_editions`.
+    -   Pré-remplit les champs "Valeur à appliquer" (`suggested_...`) avec la "meilleure suggestion" trouvée.
+    -   Le `ComparisonFrame` affiche la liste des `found_editions`.
 
--   **`get_cover_photo`** : Gère un cache pour les objets images de Tkinter/Pillow pour optimiser l'affichage.
--   **`export_csv`** : **Délègue** l'exportation des données dans un fichier CSV (**via `helpers.py`**).
+2.  **Édition par l'utilisateur** (dans `comparison_frame.py`):
+
+    -   L'utilisateur peut **éditer manuellement** n'importe quel champ "Valeur à appliquer".
+    -   L'utilisateur peut cliquer sur une édition dans la liste pour **écraser** les champs "Valeur à appliquer" avec les données de cette édition.
+    -   L'utilisateur peut utiliser le bouton `→` pour copier une valeur "Original" vers "Valeur à appliquer".
+
+3.  **`apply_changes_to_selected`** (via `task_manager.py`):
+
+    -   Bouton principal qui remplace "Accept" et "Apply".
+    -   Prend les **fichiers sélectionnés** dans le Treeview.
+    -   Lance une tâche de fond qui écrit les valeurs de "Valeur à appliquer" (`suggested_...`) directement dans les fichiers EPUB correspondants.
+    -   Il n'y a **plus d'étape "d'acceptation"** intermédiaire.
+
+4.  **`reset_selected`** (via `helpers.py`):
+    -   Réinitialise l'état du fichier.
+    -   Efface tous les champs `suggested_...`, la liste `found_editions` et réinitialise le statut à `idle`.
+
+#### 4. Export
+
+-   **`export_csv`** : Exporte l'état actuel (y compris les valeurs `suggested_...` non appliquées) dans un CSV.
 
 ---
 
-### Nouveaux Composants Dédiés
+### Composants Délégués
 
-#### `comparison_frame.py`: Panneau de Détail
+#### `comparison_frame.py`: Panneau d'Édition
 
-Ce composant `ttk.LabelFrame` :
+Ce composant `ttk.LabelFrame` est central :
 
--   Affiche les **métadonnées** côte à côte (Original/Final).
--   Intègre les `tk.Canvas` pour afficher les miniatures de **couverture**.
--   Inclut la méthode **`draw_cover`** pour le rendu des images `bytes` en utilisant PIL/Pillow.
--   Met à jour la couleur de fond des champs pour signaler les différences.
-
-#### `editions_window.py`: Sélecteur d'Éditions
-
-Ce `tk.Toplevel` modal :
-
--   Affiche les éditions alternatives trouvées (titre, auteurs, ISBN, éditeur, etc.) dans un `ttk.Treeview`.
--   Permet à l'utilisateur de sélectionner une édition, dont les données sont ensuite appliquées au modèle de métadonnées (`_on_edition_selected` dans `main_window.py`).
+-   Affiche les métadonnées côte à côte ("Original" en lecture seule, "Valeur à appliquer" en **lecture/écriture**).
+-   Affiche les couvertures.
+-   **Nouveau** : Contient le `ttk.Treeview` affichant les `meta.found_editions`.
+-   **`_on_edition_selected_from_tree`** : Méthode clé qui peuple les champs "Valeur à appliquer" (les `StringVar`s) lorsqu'une édition est sélectionnée.
+-   **`save_final_values_to_model`** : Méthode clé qui lit les `StringVar`s (édités manuellement ou peuplés) et les sauvegarde dans l'objet `EpubMeta`.
 
 #### `task_manager.py`: Gestionnaire de Threads
 
-Ce module sépare la logique bloquante de l'interface utilisateur :
-
--   **`start_fetch_task`** : Lance le _worker_ qui interroge OpenLibrary et télécharge les couvertures.
--   **`start_apply_task`** : Lance le _worker_ qui modifie les fichiers EPUB sur le disque avec les métadonnées acceptées.
+-   **`_fetch_worker`** : Récupère les données, pré-remplit `suggested_...` et remplit `found_editions`.
+-   **`_apply_worker`** : Lit les `suggested_...` du modèle et les écrit dans le fichier EPUB.
 
 #### `helpers.py`: Fonctions Utilitaires
 
-Ce module fournit des fonctions réutilisables :
-
--   **`calculate_metadata_quality`** : Calcule un score de remplissage des métadonnées (affiché dans le Treeview).
--   **`apply_suggestions_to_model`** : Copie les champs `suggested_` vers les champs `original_` après acceptation.
--   **`reset_suggestions_on_model`** : Réinitialise les champs `suggested_` et le statut.
--   **`export_to_csv`** : Gère l'écriture de l'état complet des métadonnées dans un fichier CSV.
+-   **`apply_suggestions_to_model`** : Copie les champs `suggested_` (finaux) vers les champs `original_` (utilisé _après_ l'application au fichier).
+-   **`reset_suggestions_on_model`** : Efface tous les champs `suggested_`, `found_editions` et le statut `processed`.

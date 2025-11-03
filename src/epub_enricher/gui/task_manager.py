@@ -34,18 +34,14 @@ def _fetch_worker(app: "EnricherGUI", selection: List[str]):
         meta = app.meta_list[idx]
         try:
             # 1. Fetch OpenLibrary (Titre, Auteur, ISBN, etc.)
-            query_res = _fetch_openlibrary_data(meta)
+            # MODIFIÉ : _fetch_openlibrary_data stocke maintenant les éditions
+            _fetch_openlibrary_data(meta)
 
             # 2. Fetch Genre & Summary (API séparée)
             _fetch_genre_summary_data(meta)
 
             # 3. Download Cover (si URL trouvée)
             _download_cover_data(meta)
-
-            # 4. Demander à la GUI de lancer la fenêtre pop-up si nécessaire
-            related_docs = query_res.get("related_docs", [])
-            if related_docs:
-                app.after(0, app.launch_editions_window, related_docs)
 
             meta.processed = True
             meta.note = "Suggestion fetched"
@@ -68,6 +64,10 @@ def _fetch_openlibrary_data(meta: "EpubMeta") -> Dict:
         authors=meta.original_authors,
         isbn=meta.original_isbn,
     )
+
+    # Stocker toutes les éditions trouvées dans le modèle
+    meta.found_editions = res.get("related_docs", [])
+
     suggested = res.get("by_isbn") or (res.get("related_docs") or [{}])[0]
 
     meta.suggested_title = suggested.get("title")
@@ -111,8 +111,6 @@ def _download_cover_data(meta: "EpubMeta"):
 
 
 # --- TÂCHE D'APPLICATION ---
-
-
 def start_apply_task(app: "EnricherGUI", metas: List["EpubMeta"]):
     """Lance le thread d'application des modifications."""
     threading.Thread(target=_apply_worker, args=(app, metas), daemon=True).start()
@@ -123,11 +121,14 @@ def _apply_worker(app: "EnricherGUI", metas: List["EpubMeta"]):
     any_changed = False
     for m in metas:
         try:
+            # Note: update_epub_with_metadata utilise les champs 'suggested_'
+            # (que nous traitons comme 'final') pour l'écriture. C'est correct.
             success = update_epub_with_metadata(m.path, m)
             if success:
                 m.note = "Updated"
-                # Utiliser l'helper pour nettoyer le modèle
+                # Utiliser l'helper pour copier 'suggested' -> 'original'
                 helpers.apply_suggestions_to_model(m)
+                # Utiliser l'helper pour nettoyer le modèle (y compris 'processed')
                 helpers.reset_suggestions_on_model(m)
                 rename_epub_file(m)
                 any_changed = True
@@ -143,6 +144,6 @@ def _apply_worker(app: "EnricherGUI", metas: List["EpubMeta"]):
         app.after(
             0,
             lambda: app.show_info_message(
-                "Done", "Applied accepted changes (check backup folder if needed)"
+                "Done", "Changes applied (check backup folder if needed)"
             ),
         )
