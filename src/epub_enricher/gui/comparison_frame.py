@@ -97,7 +97,6 @@ class ComparisonFrame(ttk.LabelFrame):
             "isbn",
             "language",
             "publication_date",
-            "genre",
             "summary",
             "tags",
         ]
@@ -158,14 +157,15 @@ class ComparisonFrame(ttk.LabelFrame):
         )
         editions_frame.columnconfigure(0, weight=1)
 
-        cols = ("title", "authors", "isbn", "year", "quality")
-        self.editions_tree = ttk.Treeview(editions_frame, columns=cols, show="headings", height=5)
+        cols = ("title", "authors", "isbn", "year", "lang", "quality")
+        self.editions_tree = ttk.Treeview(editions_frame, columns=cols, show="headings", height=6)
 
         column_configs = {
             "title": {"width": 250, "anchor": "w"},
             "authors": {"width": 200, "anchor": "w"},
             "isbn": {"width": 120, "anchor": "w"},
             "year": {"width": 80, "anchor": "w"},
+            "lang": {"width": 15, "anchor": "w"},
             "quality": {"width": 80, "anchor": "w"},
         }
 
@@ -263,7 +263,6 @@ class ComparisonFrame(ttk.LabelFrame):
         self.detail_vars["isbn"]["orig"].set(meta.original_isbn or "")
         self.detail_vars["language"]["orig"].set(meta.original_language or "")
         self.detail_vars["tags"]["orig"].set(format_list(meta.original_tags))
-        self.detail_vars["genre"]["orig"].set(meta.content_genre or "")
 
         # Valeurs suggérées (celles-ci sont la "source de vérité" pour les champs finaux)
         self.detail_vars["title"]["final"].set(meta.suggested_title or "")
@@ -273,13 +272,13 @@ class ComparisonFrame(ttk.LabelFrame):
         self.detail_vars["isbn"]["final"].set(meta.suggested_isbn or "")
         self.detail_vars["language"]["final"].set(meta.suggested_language or "")
         self.detail_vars["tags"]["final"].set(format_list(meta.suggested_tags))
-        self.detail_vars["genre"]["final"].set(meta.suggested_genre or "")
+        # self.detail_vars["genre"]["final"].set(meta.suggested_genre or "")
 
         # Gestion spéciale du résumé (zone de texte)
         orig_text = self.detail_entries["summary"]["orig"]
         orig_text.config(state="normal")
         orig_text.delete(1.0, tk.END)
-        orig_text.insert(1.0, meta.content_summary or "")
+        orig_text.insert(1.0, meta.original_summary or "")
         orig_text.config(state="disabled")
 
         final_text = self.detail_entries["summary"]["final"]
@@ -290,7 +289,6 @@ class ComparisonFrame(ttk.LabelFrame):
         self.draw_cover(self.cover_orig_canvas, meta.original_cover_data)
         self.draw_cover(self.cover_final_canvas, meta.suggested_cover_data)
 
-        # NOUVEAU: Remplir l'arbre des éditions
         self._populate_editions_tree(meta)
 
         self.update_comparison_colors()
@@ -314,7 +312,6 @@ class ComparisonFrame(ttk.LabelFrame):
         self.draw_cover(self.cover_orig_canvas, None)
         self.draw_cover(self.cover_final_canvas, None)
 
-        # NOUVEAU: Vider l'arbre des éditions
         if self.editions_tree:
             self._populate_editions_tree(None)
 
@@ -322,6 +319,8 @@ class ComparisonFrame(ttk.LabelFrame):
         """
         Sauvegarde les valeurs actuelles des champs 'final' (StringVars)
         vers l'objet self.current_meta.
+        Si un champ 'final' est vide, la valeur 'original' (du modèle)
+        est préservée pour éviter la perte de données.
         """
         if not self.current_meta:
             return
@@ -329,23 +328,42 @@ class ComparisonFrame(ttk.LabelFrame):
         meta = self.current_meta
 
         def to_list(val: str) -> List[str]:
-            return [v.strip() for v in val.split(",")] if val else []
+            # S'assure que la liste n'est pas juste [''] si l'utilisateur entre " "
+            stripped_val = val.strip()
+            if not stripped_val:
+                return []
+            return [v.strip() for v in stripped_val.split(",") if v.strip()]
 
-        meta.suggested_title = self.detail_vars["title"]["final"].get()
-        meta.suggested_authors = to_list(self.detail_vars["authors"]["final"].get())
-        meta.suggested_publisher = self.detail_vars["publisher"]["final"].get()
-        meta.suggested_isbn = self.detail_vars["isbn"]["final"].get()
-        meta.suggested_language = self.detail_vars["language"]["final"].get()
-        meta.suggested_publication_date = self.detail_vars["publication_date"]["final"].get()
-        meta.suggested_genre = self.detail_vars["genre"]["final"].get()
-        meta.suggested_tags = to_list(self.detail_vars["tags"]["final"].get())
+        # Récupérer les valeurs finales (GUI) en les nettoyant
+        final_title = self.detail_vars["title"]["final"].get().strip()
+        final_authors_str = self.detail_vars["authors"]["final"].get()
+        final_publisher = self.detail_vars["publisher"]["final"].get().strip()
+        final_isbn = self.detail_vars["isbn"]["final"].get().strip()
+        final_language = self.detail_vars["language"]["final"].get().strip()
+        final_date = self.detail_vars["publication_date"]["final"].get().strip()
+        final_tags_str = self.detail_vars["tags"]["final"].get()
+        final_summary = self.detail_entries["summary"]["final"].get(1.0, tk.END).strip()
 
-        # Gestion spéciale du résumé (zone de texte)
-        meta.suggested_summary = self.detail_entries["summary"]["final"].get(1.0, tk.END).strip()
+        # Convertir les listes
+        final_authors = to_list(final_authors_str)
+        final_tags = to_list(final_tags_str)
+
+        # Appliquer la logique : final_value (GUI) OU original_value (modèle)
+        # Si final_value est "" ou [], Python utilisera la valeur originale.
+        meta.suggested_title = final_title or meta.original_title
+        meta.suggested_authors = final_authors or meta.original_authors
+        meta.suggested_publisher = final_publisher or meta.original_publisher
+        meta.suggested_isbn = final_isbn or meta.original_isbn
+        meta.suggested_language = final_language or meta.original_language
+        meta.suggested_publication_date = final_date or meta.original_publication_date
+        meta.suggested_tags = final_tags or meta.original_tags
+        meta.suggested_summary = final_summary or meta.original_summary
+
+        # La couverture (suggested_cover_data) est gérée séparément
+        # lors de la sélection/téléchargement, donc nous n'y touchons pas ici.
 
         logger.debug("Saved final values from GUI to model for %s", meta.filename)
 
-    # (Aucun changement à update_comparison_colors)
     def update_comparison_colors(self):
         """Met à jour les couleurs de fond des champs de comparaison."""
         style = ttk.Style()
@@ -421,6 +439,14 @@ class ComparisonFrame(ttk.LabelFrame):
                 or str(doc.get("first_publish_year", ""))
             )
 
+            year = (
+                details.get("publish_date")
+                or str(details.get("first_publish_year", ""))
+                or str(doc.get("first_publish_year", ""))
+            )
+
+            lang = details.get("language", doc.get("language", ""))
+
             quality_score = 0
             if title:
                 quality_score += 20
@@ -431,7 +457,9 @@ class ComparisonFrame(ttk.LabelFrame):
             if details.get("publishers") or doc.get("publisher"):
                 quality_score += 20
             if year:
-                quality_score += 20
+                quality_score += 10
+            if lang:
+                quality_score += 10
             quality_text = f"{quality_score}%"
 
             # Utiliser l'index 'i' comme IID
@@ -439,7 +467,7 @@ class ComparisonFrame(ttk.LabelFrame):
                 "",
                 "end",
                 iid=str(i),
-                values=(title, authors, isbns, year, quality_text),
+                values=(title, authors, isbns, year, lang, quality_text),
             )
 
     def _on_edition_selected_from_tree(self, event=None):
@@ -467,7 +495,7 @@ class ComparisonFrame(ttk.LabelFrame):
         self.update_comparison_colors()
 
         # Demander au contrôleur principal de retélécharger la couverture
-        if self.current_meta.suggested_cover_url:
+        if self.current_meta.suggested_cover_data:
             self.main_controller._update_cover_for_edition(self.current_meta)
 
     def _apply_doc_to_final_fields(self, doc: Dict):
@@ -535,7 +563,7 @@ class ComparisonFrame(ttk.LabelFrame):
         )
 
         tags = details.get("subject", doc.get("subject", []))
-        cover_url = details.get("cover", doc.get("cover"))
+        cover_data = details.get("cover", doc.get("cover"))
 
         # Mettre à jour les variables Tkinter (champs "final")
         self.detail_vars["title"]["final"].set(title or "")
@@ -547,4 +575,4 @@ class ComparisonFrame(ttk.LabelFrame):
         self.detail_vars["tags"]["final"].set(", ".join(tags or []))
 
         # Mettre à jour l'URL de couverture sur le modèle pour le téléchargement
-        meta.suggested_cover_url = cover_url
+        meta.suggested_cover_data = cover_data

@@ -70,9 +70,8 @@ class EnricherGUI(tk.Tk):
             "isbn",
             "language",
             "date",
-            "genre",
-            "summary",
             "tags",
+            "summary",
             "status",
         )
         self.tree = ttk.Treeview(self, columns=cols, show="headings", height=GUI_TREE_HEIGHT)
@@ -84,7 +83,6 @@ class EnricherGUI(tk.Tk):
             "isbn": {"width": 90, "anchor": "w"},
             "language": {"width": 70, "anchor": "w"},
             "date": {"width": 70, "anchor": "w"},
-            "genre": {"width": 100, "anchor": "w"},
             "summary": {"width": 150, "anchor": "w"},
             "tags": {"width": 100, "anchor": "w"},
             "status": {"width": 90, "anchor": "w"},
@@ -157,14 +155,7 @@ class EnricherGUI(tk.Tk):
                 original_publisher=res.get("publisher"),
                 original_publication_date=res.get("date"),
                 original_cover_data=res.get("cover_data"),
-                content_isbn=res.get("content_isbn"),
-                content_summary=res.get("content_summary"),
-                content_genre=res.get("content_genre"),
-                content_publisher=res.get("content_publisher"),
-                content_publication_date=res.get("content_publication_date"),
-                content_edition_info=res.get("content_edition_info"),
-                content_analysis=res.get("content_analysis"),
-                # Ne pas mettre 'found_editions' ici
+                original_summary=res.get("summary"),
             )
 
             # 2. ASSIGNER le nouvel attribut APRES la création
@@ -315,20 +306,19 @@ class EnricherGUI(tk.Tk):
         status_text = "processed" if m.processed else "idle"
         if quality_score > 0:
             status_text += f" ({quality_score}%)"
-        summary_text = m.suggested_summary or m.content_summary or ""
+        summary_text = m.suggested_summary or m.original_summary or ""
         summary_preview = (summary_text[:50] + "...") if len(summary_text) > 50 else summary_text
         return (
-            m.filename,
-            m.suggested_title or m.original_title or "",
-            ", ".join(m.suggested_authors or m.original_authors or []),
-            m.suggested_publisher or m.original_publisher or "",
-            m.suggested_isbn or m.original_isbn or "",
-            m.suggested_language or m.original_language or "",
-            m.suggested_publication_date or m.original_publication_date or "",
-            m.suggested_genre or m.content_genre or "",
-            summary_preview,
-            ", ".join(m.suggested_tags or m.original_tags or []),
-            status_text,
+            m.filename,  # 1
+            m.suggested_title or m.original_title or "",  # 2
+            ", ".join(m.suggested_authors or m.original_authors or []),  # 3
+            m.suggested_publisher or m.original_publisher or "",  # 4
+            m.suggested_isbn or m.original_isbn or "",  # 5
+            m.suggested_language or m.original_language or "",  # 6
+            m.suggested_publication_date or m.original_publication_date or "",  # 7
+            ", ".join(m.suggested_tags or m.original_tags or []),  # 8 (Tags)
+            summary_preview,  # 9 (Summary)
+            status_text,  # 10 (Status)
         )
 
     def on_select(self, evt=None):
@@ -371,19 +361,47 @@ class EnricherGUI(tk.Tk):
     # --- Callbacks (appelés depuis ComparisonFrame & EditionsWindow) ---
 
     def choose_field(self, field: str, side: str):
-        if not self.current_meta or side != "orig":
+        """
+        Copie la valeur 'original' (ou 'content') vers la 'suggested'
+        pour un champ spécifique.
+        MODIFIÉ : Met à jour le modèle ET le widget GUI directement
+        sans appeler load_meta(), pour éviter d'écraser les autres
+        modifications non sauvegardées.
+        """
+        if not self.current_meta or side != "orig" or not self.comparison_frame:
             return
 
-        value = (
-            getattr(self.current_meta, f"content_{field}", None)
-            if field in ("summary", "genre")
-            else getattr(self.current_meta, f"original_{field}")
-        )
+        # 1. Obtenir la valeur originale
+        if field in ("summary", "tags"):
+            value = getattr(self.current_meta, f"original_{field}", None)
+        else:
+            value = getattr(self.current_meta, f"original_{field}")
 
+        # 2. Mettre à jour le modèle
         setattr(self.current_meta, f"suggested_{field}", value)
 
-        if self.comparison_frame:
-            self.comparison_frame.load_meta(self.current_meta)
+        # 3. Mettre à jour la GUI (StringVar ou Text) SANS recharger
+        try:
+            if field == "summary":
+                # Cas spécial pour le widget Text
+                final_text = self.comparison_frame.detail_entries["summary"]["final"]
+                final_text.delete(1.0, tk.END)
+                final_text.insert(1.0, value or "")
+            elif field == "authors" or field == "tags":
+                # Cas spécial pour les listes
+                str_value = ", ".join(value or [])
+                self.comparison_frame.detail_vars[field]["final"].set(str_value)
+            else:
+                # Cas standard pour les StringVars
+                self.comparison_frame.detail_vars[field]["final"].set(value or "")
+
+            # 4. Mettre à jour les couleurs de comparaison
+            self.comparison_frame.update_comparison_colors()
+
+        except KeyError:
+            logger.warning("Tentative de mise à jour d'un champ GUI inconnu : %s", field)
+        except Exception as e:
+            logger.exception("Erreur lors de la mise à jour directe du champ GUI : %s", e)
 
     def choose_cover(self, side: str):
         if not self.current_meta or side != "orig":
@@ -411,17 +429,6 @@ class EnricherGUI(tk.Tk):
         except Exception:
             logger.exception("Échec de la création de l'aperçu d'image")
             return None
-
-    # --- MÉTHODES OBSOLÈTES ---
-    # def launch_editions_window(self, docs: List[Dict]):
-    #     """(OBSOLÈTE) Ouvre la fenêtre modale des éditions."""
-    #     if not docs:
-    #         return
-    #     EditionsWindow(self, docs, self._on_edition_selected)
-    #
-    # def _on_edition_selected(self, selected_doc: Dict):
-    #     """(OBSOLÈTE) Applique les métadonnées de l'édition sélectionnée."""
-    #     pass # La logique est maintenant dans ComparisonFrame
 
     def _update_cover_for_edition(self, meta: "EpubMeta"):
         """

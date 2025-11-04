@@ -9,7 +9,7 @@ import threading
 from typing import TYPE_CHECKING, Dict, List
 
 from ..core.epub_processor import rename_epub_file, update_epub_with_metadata
-from ..core.metadata_fetcher import download_cover, fetch_genre_and_summary, query_openlibrary_full
+from ..core.metadata_fetcher import download_cover, query_openlibrary_full
 from . import helpers
 
 if TYPE_CHECKING:
@@ -34,11 +34,10 @@ def _fetch_worker(app: "EnricherGUI", selection: List[str]):
         meta = app.meta_list[idx]
         try:
             # 1. Fetch OpenLibrary (Titre, Auteur, ISBN, etc.)
-            # MODIFIÉ : _fetch_openlibrary_data stocke maintenant les éditions
             _fetch_openlibrary_data(meta)
 
             # 2. Fetch Genre & Summary (API séparée)
-            _fetch_genre_summary_data(meta)
+            # _fetch_genre_summary_data(meta)
 
             # 3. Download Cover (si URL trouvée)
             _download_cover_data(meta)
@@ -68,44 +67,20 @@ def _fetch_openlibrary_data(meta: "EpubMeta") -> Dict:
     # Stocker toutes les éditions trouvées dans le modèle
     meta.found_editions = res.get("related_docs", [])
 
-    suggested = res.get("by_isbn") or (res.get("related_docs") or [{}])[0]
-
-    meta.suggested_title = suggested.get("title")
-    meta.suggested_authors = suggested.get("authors") or suggested.get("author_name")
-    meta.suggested_isbn = suggested.get("isbn")
-    meta.suggested_language = suggested.get("language")
-    meta.suggested_publisher = suggested.get("publisher")
-    meta.suggested_publication_date = suggested.get("publish_date") or suggested.get(
-        "first_publish_year"
-    )
-    meta.suggested_tags = suggested.get("subject") or []
-    meta.suggested_cover_url = suggested.get("cover")
-
     return res
-
-
-def _fetch_genre_summary_data(meta: "EpubMeta"):
-    """Sous-méthode pour le fetch Genre/Résumé."""
-    try:
-        data = fetch_genre_and_summary(
-            title=meta.original_title,
-            authors=meta.original_authors,
-            isbn=meta.original_isbn,
-        )
-        if data.get("genre"):
-            meta.suggested_genre = data["genre"]
-        if data.get("summary"):
-            meta.suggested_summary = data["summary"]
-    except Exception as e:
-        logger.warning("Failed to fetch genre and summary for %s: %s", meta.filename, e)
 
 
 def _download_cover_data(meta: "EpubMeta"):
     """Sous-méthode pour le téléchargement de la couverture."""
+    # 1. Récupérer l'URL/ID (stocké temporairement dans ce champ)
+    cover_id_or_url = meta.suggested_cover_data
+    # 2. Vider le champ (au cas où le téléchargement échoue)
     meta.suggested_cover_data = None
-    if meta.suggested_cover_url:
+
+    if cover_id_or_url:
         try:
-            meta.suggested_cover_data = download_cover(meta.suggested_cover_url)
+            # 3. Télécharger et stocker les *octets* de l'image
+            meta.suggested_cover_data = download_cover(cover_id_or_url)
         except Exception:
             logger.exception("Failed to download cover")
 
@@ -122,7 +97,6 @@ def _apply_worker(app: "EnricherGUI", metas: List["EpubMeta"]):
     for m in metas:
         try:
             # Note: update_epub_with_metadata utilise les champs 'suggested_'
-            # (que nous traitons comme 'final') pour l'écriture. C'est correct.
             success = update_epub_with_metadata(m.path, m)
             if success:
                 m.note = "Updated"
