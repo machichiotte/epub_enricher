@@ -1,6 +1,6 @@
 # epub_enricher/src/epub_enricher/core/models.py
 from dataclasses import dataclass, field
-from typing import Dict, List
+from typing import List
 
 
 @dataclass
@@ -19,6 +19,7 @@ class EpubMeta:
     original_publication_date: str | None = None
     original_tags: List[str] | None = field(default_factory=list)
     original_cover_data: bytes | None = None
+    original_summary: str | None = None
 
     # Métadonnées suggérées / à appliquer
     suggested_title: str | None = None
@@ -29,19 +30,7 @@ class EpubMeta:
     suggested_publication_date: str | None = None
     suggested_tags: List[str] | None = field(default_factory=list)
     suggested_cover_data: bytes | None = None
-
-    # NOUVEAU : Métadonnées extraites du contenu
-    content_isbn: str | None = None
-    content_summary: str | None = None
-    content_genre: str | None = None
-    content_publisher: str | None = None
-    content_publication_date: str | None = None
-    content_edition_info: Dict | None = None
-    content_analysis: Dict | None = None
-
-    # NOUVEAU : Métadonnées suggérées pour le contenu
     suggested_summary: str | None = None
-    suggested_genre: str | None = None
 
     # Statut du traitement
     processed: bool = False

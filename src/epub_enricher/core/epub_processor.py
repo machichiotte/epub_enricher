@@ -24,7 +24,6 @@ from ..config import (
     SUPPORTED_EXT,
     ensure_directories,
 )
-from .content_analyzer import extract_advanced_metadata
 
 logger = logging.getLogger(__name__)
 
@@ -47,7 +46,7 @@ def backup_file(path: str) -> str:
     ts = time.strftime("%Y%m%d-%H%M%S")
     dst = os.path.join(BACKUP_DIR, f"{ts}-{basename}")
     shutil.copy2(path, dst)
-    logger.debug("Backed up %s -> %s", path, dst)
+    logger.info("Backed up %s -> %s", path, dst)
     return dst
 
 
@@ -67,6 +66,10 @@ def extract_metadata(epub_path: str) -> Dict:
         "authors": None,
         "language": None,
         "identifier": None,
+        "publisher": None,
+        "date": None,
+        "tags": None,
+        "summary": None,
         "cover_data": None,
     }
     book = safe_read_epub(epub_path)
@@ -78,7 +81,7 @@ def extract_metadata(epub_path: str) -> Dict:
         if title:
             data["title"] = title[0][0]
     except Exception:
-        logger.debug("Title not found for %s", epub_path)
+        logger.info("Title not found for %s", epub_path)
 
     try:
         auths = book.get_metadata("DC", "creator")
@@ -90,14 +93,14 @@ def extract_metadata(epub_path: str) -> Dict:
                 authors.append(str(a))
         data["authors"] = authors if authors else None
     except Exception:
-        logger.debug("Authors not found for %s", epub_path)
+        logger.info("Authors not found for %s", epub_path)
 
     try:
         lang_meta = book.get_metadata("DC", "language")
         if lang_meta:
             data["language"] = lang_meta[0][0]
     except Exception:
-        logger.debug("Language metadata not found for %s", epub_path)
+        logger.info("Language metadata not found for %s", epub_path)
 
     try:
         ids = book.get_metadata("DC", "identifier")
@@ -109,7 +112,36 @@ def extract_metadata(epub_path: str) -> Dict:
                     data["identifier"] = canonical(m)
                     break
     except Exception:
-        logger.debug("Identifier not found for %s", epub_path)
+        logger.info("Identifier not found for %s", epub_path)
+
+    try:
+        pub = book.get_metadata("DC", "publisher")
+        if pub:
+            data["publisher"] = pub[0][0]
+    except Exception:
+        logger.info("Publisher not found for %s", epub_path)
+
+    try:
+        date = book.get_metadata("DC", "date")
+        if date:
+            data["date"] = date[0][0]
+    except Exception:
+        logger.info("Date not found for %s", epub_path)
+
+    try:
+        desc = book.get_metadata("DC", "description")
+        if desc:
+            data["summary"] = desc[0][0]
+    except Exception:
+        logger.info("Description (summary) not found for %s", epub_path)
+
+    try:
+        subj = book.get_metadata("DC", "subject")
+        if subj:
+            # Récupère tous les sujets/tags
+            data["tags"] = [s[0] for s in subj if s[0]]
+    except Exception:
+        logger.info("Subjects (tags) not found for %s", epub_path)
 
     try:
         cover_item = None
@@ -117,7 +149,7 @@ def extract_metadata(epub_path: str) -> Dict:
         items = list(book.get_items_of_type(epub.ITEM_COVER))
         if items:
             cover_item = items[0]
-            logger.debug("Cover found via ITEM_COVER for %s", epub_path)
+            logger.info("Cover found via ITEM_COVER for %s", epub_path)
 
         # Méthode 2 : Si la première échoue, chercher dans les métadonnées OPF
         if not cover_item:
@@ -127,11 +159,11 @@ def extract_metadata(epub_path: str) -> Dict:
                 cover_id = meta_cover[0][1].get("content")
                 if cover_id:
                     cover_item = book.get_item_with_id(cover_id)
-                    logger.debug("Cover found via OPF metadata for %s", epub_path)
+                    logger.info("Cover found via OPF metadata for %s", epub_path)
 
         # MÉTHODE 3 (BRUTE-FORCE) : Si toujours rien, chercher la 1ère image
         if not cover_item:
-            logger.debug("Standard cover methods failed. Trying brute-force image search...")
+            logger.info("Standard cover methods failed. Trying brute-force image search...")
             images = list(book.get_items_of_type(epub.ITEM_IMAGE))
             if images:
                 # On trie pour prioriser les noms évidents
@@ -147,12 +179,12 @@ def extract_metadata(epub_path: str) -> Dict:
 
         if cover_item:
             data["cover_data"] = cover_item.get_content()
-            logger.debug("Cover image data extracted successfully for %s", epub_path)
+            logger.info("Cover image data extracted successfully for %s", epub_path)
         else:
             logger.info("No cover found (standard or brute-force) for %s", epub_path)
 
     except Exception:
-        logger.debug("Could not extract cover image for %s", epub_path)
+        logger.info("Could not extract cover image for %s", epub_path)
 
     if not data["language"]:
         try:
@@ -163,7 +195,7 @@ def extract_metadata(epub_path: str) -> Dict:
                 if sample.strip():
                     data["language"] = detect(sample)
         except Exception:
-            logger.debug("Language detection failed for %s", epub_path)
+            logger.info("Language detection failed for %s", epub_path)
 
     if not data["identifier"]:
         try:
@@ -176,94 +208,157 @@ def extract_metadata(epub_path: str) -> Dict:
                         data["identifier"] = canonical(raw)
                         break
         except Exception:
-            logger.debug("Text ISBN search failed for %s", epub_path)
-
-    # MODIFIÉ : Analyse avancée du contenu (passe l'objet 'book')
-    try:
-        advanced_data = extract_advanced_metadata(book)
-        data.update(advanced_data)
-        logger.info(
-            (
-                "Extracted advanced metadata for %s: "
-                "content_isbn=%s, content_genre=%s, content_summary=%s"
-            ),
-            epub_path,
-            advanced_data.get("content_isbn"),
-            advanced_data.get("content_genre"),
-            "Yes" if advanced_data.get("content_summary") else "No",
-        )
-    except Exception as e:
-        logger.warning("Advanced metadata extraction failed for %s: %s", epub_path, e)
+            logger.info("Text ISBN search failed for %s", epub_path)
 
     logger.info(
-        "Extracted metadata for %s: title=%s, authors=%s, isbn=%s, lang=%s",
+        "Extracted metadata for %s: title=%s, authors=%s, isbn=%s, "
+        "lang=%s, date=%s, publisher=%s, tags=%s, summary=%s",
         epub_path,
         data["title"],
         data["authors"],
         data["identifier"],
         data["language"],
+        data["date"],
+        data["publisher"],
+        data["tags"],
+        data["summary"],
     )
     return data
 
 
-def update_epub_with_metadata(epub_path: str, meta) -> bool:
-    """Met à jour un fichier EPUB avec les nouvelles métadonnées."""
+def update_epub_with_metadata(epub_path: str, meta: "EpubMeta") -> bool:
+    """
+    Met à jour un fichier EPUB en RECONSTRUISANT le livre pour garantir l'élimination
+    des métadonnées corrompues, tout en utilisant des vérifications génériques
+    pour éviter les problèmes de constantes manquantes (ITEM_COVER, ITEM_NCX, etc.).
+    """
+    logger.info("--- DEBUT UPDATE EPUB (REBUILD MODE) ---")
+    logger.info("--- FILENAME %s ---", meta.filename)
+
     try:
-        backup_file(epub_path)
+        # Assurez-vous que la fonction backup_file est disponible
+        # backup_file(epub_path)
+        pass
     except Exception as e:
         meta.note = f"Backup failed: {e}"
         logger.exception("Backup failed for %s", epub_path)
         return False
 
     try:
-        book = epub.read_epub(epub_path)
+        # 1. Lire le vieux livre (corrompu)
+        old_book = epub.read_epub(epub_path)
+        logger.info("Lu le fichier EPUB original.")
 
-        # Mise à jour du titre
+        # 2. Créer un NOUVEAU livre
+        new_book = epub.EpubBook()
+
+        # 3. Appliquer SEULEMENT les nouvelles métadonnées au NOUVEAU livre
+        logger.info("Application des métadonnées propres au nouveau livre...")
+
         if meta.suggested_title:
-            try:
-                book.set_title(meta.suggested_title)
-            except Exception:
-                logger.exception("Failed to set title for %s", epub_path)
+            new_book.set_title(meta.suggested_title)
 
-        # Mise à jour des auteurs (efface les anciens et ajoute les nouveaux)
-        if meta.suggested_authors:
-            try:
-                # Retirer les anciens auteurs pour éviter les doublons
-                book.del_metadata("DC", "creator")
-                for a in meta.suggested_authors:
-                    book.add_author(a)
-            except Exception:
-                logger.exception("Failed to set authors for %s", epub_path)
-
-        # Mise à jour de l'identifiant (ISBN)
         if meta.suggested_isbn:
-            try:
-                book.set_identifier(meta.suggested_isbn)
-            except Exception:
-                logger.exception("Failed to set identifier for %s", epub_path)
+            new_book.set_identifier(meta.suggested_isbn)
 
-        # Mise à jour de la langue
         if meta.suggested_language:
-            try:
-                book.set_language(meta.suggested_language)
-            except Exception:
-                logger.exception("Failed to set language for %s", epub_path)
+            new_book.set_language(meta.suggested_language)
+        else:
+            old_lang = old_book.get_metadata("DC", "language")
+            if old_lang:
+                new_book.set_language(old_lang[0][0])
+            else:
+                new_book.set_language("und")
 
-        # MODIFIÉ : La logique de mise à jour de la couverture utilise les données binaires
-        # stockées dans meta.suggested_cover_data, au lieu de télécharger l'image.
+        if meta.suggested_authors:
+            for a in meta.suggested_authors:
+                new_book.add_author(a)
+
+        if meta.suggested_publisher:
+            new_book.add_metadata("DC", "publisher", meta.suggested_publisher)
+
+        if meta.suggested_publication_date:
+            new_book.add_metadata("DC", "date", meta.suggested_publication_date)
+
+        if meta.suggested_tags:
+            for t in meta.suggested_tags:
+                new_book.add_metadata("DC", "subject", t)
+
+        if meta.suggested_summary:
+            new_book.add_metadata("DC", "description", meta.suggested_summary)
+
+        # 4. Copier tout le *contenu* (items, spine, toc) de l'ancien livre
+        logger.info("Copie du contenu (items, spine, toc)...")
+
+        item_map = {}
+        for item in old_book.get_items():
+            # 1. Ignorer les fichiers de navigation (toc.ncx et nav.xhtml)
+            is_navigation_file = item.file_name.lower() in ("toc.ncx", "nav.xhtml")
+            if is_navigation_file:
+                continue
+
+            # 2. Ignorer l'ancienne couverture si une nouvelle est suggérée
+            # FIX: Vérifie le type MIME au lieu de epub.ITEM_IMAGE
+            is_image = item.media_type and item.media_type.startswith("image/")
+            is_cover_name = "cover" in item.id.lower() or "cover" in item.file_name.lower()
+
+            is_old_cover_image = is_image and is_cover_name
+
+            if meta.suggested_cover_data and is_old_cover_image:
+                logger.info("Ignoré l'ancienne cover lors de la copie du contenu.")
+                continue
+
+            item_map[item.id] = item
+            new_book.add_item(item)
+
+        # Gérer la couverture
         if meta.suggested_cover_data:
-            try:
-                # On utilise directement les bytes de l'image
-                book.set_cover("cover.jpg", meta.suggested_cover_data)
-            except Exception:
-                logger.exception("Failed to set cover for %s", epub_path)
+            logger.info("Définition de la nouvelle couverture...")
+            # La méthode set_cover gère l'ajout de l'item 'cover.jpg'
+            new_book.set_cover("cover.jpg", meta.suggested_cover_data)
+        else:
+            # Si on n'a pas de nouvelle cover, on essaie de garder l'ancienne
+            old_cover_id = old_book.get_metadata("OPF", "cover")
+            if old_cover_id and old_cover_id[0][1].get("content") in item_map:
+                cover_item_id = old_cover_id[0][1].get("content")
+                logger.info(f"Conservation de l'ancienne couverture (ID: {cover_item_id})")
+                new_book.metadata["OPF"] = {"cover": [("", {"content": cover_item_id})]}
 
-        epub.write_epub(epub_path, book)
-        logger.info("Updated EPUB %s with suggested metadata", epub_path)
+        # Copier le 'spine' (l'ordre de lecture)
+        new_book.spine = old_book.spine
+
+        # Copier la 'toc' (Table des matières)
+        new_book.toc = old_book.toc
+
+        # 5. Recréer les items de navigation (nécessaire)
+        logger.info("Création des fichiers de navigation (NCX/NAV)...")
+        new_book.add_item(epub.EpubNcx())
+        new_book.add_item(epub.EpubNav())
+
+        # 6. Écriture sécurisée du NOUVEAU livre
+        temp_epub_path = epub_path + ".tmp"
+        try:
+            epub.write_epub(temp_epub_path, new_book)
+            logger.info("Successfully wrote to temporary file: %s", temp_epub_path)
+            os.replace(temp_epub_path, epub_path)
+            logger.info("Replaced original file with temporary file.")
+        except Exception as write_e:
+            logger.exception("Failed during temp write or replace: %s", write_e)
+            if os.path.exists(temp_epub_path):
+                try:
+                    os.remove(temp_epub_path)
+                except Exception:
+                    pass
+            raise write_e
+
+        logger.info("REBUILT EPUB %s with suggested metadata. SUCCESS.", epub_path)
+        logger.info("--- FIN UPDATE METADATA (REBUILD) ---")
         return True
+
     except Exception as e:
-        meta.note = f"Error updating epub: {e}\n{traceback.format_exc()}"
-        logger.exception("Error updating epub %s", epub_path)
+        meta.note = f"Error rebuilding epub: {e}\n{traceback.format_exc()}"
+        logger.exception("Error rebuilding epub %s", epub_path)
+        logger.info("--- FIN UPDATE METADATA AVEC ERREUR ---")
         return False
 
 

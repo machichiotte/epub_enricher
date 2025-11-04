@@ -1,6 +1,6 @@
 # epub_enricher/src/epub_enricher/core/external_apis.py
 """
-Intégration avec des APIs externes pour récupérer genre et résumé
+Intégration avec des APIs externes pour récupérer tags et résumé
 """
 
 import logging
