@@ -13,7 +13,8 @@ from typing import TYPE_CHECKING, Dict, List, Union
 from PIL import Image
 
 from ..config import GUI_COVER_SIZE, GUI_GEOMETRY, GUI_TITLE, GUI_TREE_HEIGHT
-from ..core.epub_processor import extract_metadata, find_epubs_in_folder
+from ..core.epub_metadata import extract_metadata
+from ..core.file_utils import find_epubs_in_folder
 from ..core.models import EpubMeta
 from . import helpers, task_manager
 from .comparison_frame import ComparisonFrame

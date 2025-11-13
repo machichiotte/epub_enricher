@@ -7,7 +7,8 @@ import logging
 import os
 from typing import List
 
-from .core.epub_processor import extract_metadata, find_epubs_in_folder, update_epub_with_metadata
+from .core.epub_metadata import extract_metadata, update_epub_with_metadata
+from .core.file_utils import find_epubs_in_folder
 from .core.metadata_fetcher import download_cover, extract_suggested_from_openlib
 from .core.models import EpubMeta
 

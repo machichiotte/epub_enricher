@@ -8,12 +8,13 @@ Ce module contient la **logique métier principale** du projet EPUB Enricher. Il
 
 Le dossier `core` est composé des fichiers suivants :
 
-| Fichier               | Description Principale                                                                                                                                                                                            |
-| :-------------------- | :---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `models.py`           | Définit le modèle de données `EpubMeta` utilisé pour gérer les métadonnées (**originales** et **suggérées**). Le modèle a été simplifié pour retirer les champs d'analyse de contenu interne.                     |
-| `epub_processor.py`   | Contient les fonctions de lecture, d'écriture, de **sauvegarde horodatée**, de mise à jour physique et de **renommage** des fichiers EPUB.                                                                        |
-| `external_apis.py`    | Intègre les APIs externes (Google Books, Wikipedia, OpenLibrary) pour récupérer le genre et le résumé. **Contient désormais les utilitaires de nettoyage HTML et de classification de genre basés sur le texte.** |
-| `metadata_fetcher.py` | Implémente la logique de recherche complexe sur **OpenLibrary** (par ISBN et par titre/auteur) et gère l'infrastructure HTTP résiliente avec **backoff et retry**.                                                |
+| Fichier               | Description Principale                                                                                                           |
+| :-------------------- | :------------------------------------------------------------------------------------------------------------------------------- |
+| `models.py`           | Définit le modèle de données `EpubMeta` (inchangé).                                                                              |
+| `file_utils.py`       | Gère les opérations sur le **système de fichiers** : trouver les EPUBs, **sauvegarde horodatée** et **renommage** de fichiers.   |
+| `epub_metadata.py`    | Gère la **logique EPUB** : lecture, écriture, extraction et mise à jour des _métadonnées_ (mode _rebuild_).                      |
+| `external_apis.py`    | Intègre les APIs externes (Google Books, Wikipedia, OpenLibrary) et contient les utilitaires de nettoyage HTML/texte (inchangé). |
+| `metadata_fetcher.py` | Implémente la logique de recherche complexe (OpenLibrary) et l'infrastructure HTTP résiliente (inchangé).                        |
 
 ---
 
@@ -27,14 +28,19 @@ Le dossier `core` est composé des fichiers suivants :
 -   Les champs **suggérés** (obtenus à partir des sources externes), destinés à être appliqués à l'EPUB.
 -   Les champs de **statut** (`processed`, `accepted`, `note`) pour suivre le flux de travail.
 
-### 2. Gestion des Fichiers EPUB (`epub_processor.py`)
+### 2. Gestion des Fichiers et Métadonnées (`file_utils.py` & `epub_metadata.py`)
 
-Ce module gère le cycle de vie de l'EPUB :
+L'ancien fichier `epub_processor.py` a été divisé en two modules pour une meilleure **séparation des responsabilités** :
 
--   **Lecture et Écriture** : Fonctions sécurisées pour lire (`safe_read_epub`) et reconstruire un EPUB (mode _rebuild_ si nécessaire).
--   **Sauvegarde** : Création d'une copie horodatée (`backup_file`) avant toute modification.
--   **Extraction de Métadonnées** : Extraction des métadonnées OPF standard (titre, auteur, ISBN, langue) et de la couverture.
--   **Renommage** : Logique de renommage avancée basée sur les métadonnées suggérées/originales (`[Année] - Auteurs - Titre.epub`).
+-   **`epub_metadata.py`** : Gère le cycle de vie _interne_ de l'EPUB.
+
+    -   **Lecture/Écriture** : Fonctions sécurisées pour lire (`safe_read_epub`) et reconstruire un EPUB (`update_epub_with_metadata`) en mode _rebuild_ pour nettoyer les métadonnées corrompues.
+    -   **Extraction de Métadonnées** : Extraction des métadonnées OPF standard (titre, auteur, ISBN) et de la couverture.
+
+-   **`file_utils.py`** : Gère les interactions avec le _système de fichiers_.
+    -   **Recherche** : `find_epubs_in_folder` pour trouver les fichiers.
+    -   **Sauvegarde** : Création d'une copie horodatée (`backup_file`) avant toute modification.
+    -   **Renommage** : Logique de renommage avancée (`rename_epub_file`) basée sur les métadonnées (`[Année] - Auteurs - Titre.epub`).
 
 ### 3. Recherche de Métadonnées Externes et Utilitaires (`external_apis.py` & `metadata_fetcher.py`)
 
