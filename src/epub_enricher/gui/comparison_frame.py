@@ -16,8 +16,6 @@ from ..config import GUI_COVER_SIZE
 if TYPE_CHECKING:
     from ..core.models import EpubMeta
 
-    # L'importation de "EnricherGUI" n'est plus nécessaire
-
 logger = logging.getLogger(__name__)
 
 
@@ -37,7 +35,7 @@ class ComparisonFrame(ttk.LabelFrame):
     ):
         super().__init__(master, text="Comparaison et Sélection", **kwargs)
 
-        # Stocker les callbacks au lieu du contrôleur
+        # Stocker les callbacks
         self.on_use_original_field = on_use_original_field
         self.on_use_original_cover = on_use_original_cover
         self.on_edition_selected_cover = on_edition_selected_cover
@@ -51,13 +49,37 @@ class ComparisonFrame(ttk.LabelFrame):
         self.create_comparison_widgets()
 
     def create_comparison_widgets(self):
-        # ... (Configuration des colonnes, identique) ...
+        """Crée et dispose les widgets de comparaison."""
         self.columnconfigure(1, weight=1)
         self.columnconfigure(2, weight=2)
         self.columnconfigure(3, weight=1)
         self.columnconfigure(4, weight=2)
 
-        # --- Covers (Identique) ---
+        self._create_headers()
+        self._create_cover_widgets()
+        self._create_metadata_fields()
+        self._create_editions_tree()
+
+    def _create_headers(self):
+        """Crée les en-têtes de colonnes."""
+        ttk.Label(self, text="Couverture originale", font=("TkDefaultFont", 9, "bold")).grid(
+            row=0, column=0, padx=6, pady=3, sticky="w"
+        )
+        ttk.Label(self, text="Couverture suggérée", font=("TkDefaultFont", 9, "bold")).grid(
+            row=0, column=5, padx=6, pady=3, sticky="w"
+        )
+        ttk.Label(self, text="Champ", font=("TkDefaultFont", 10, "bold")).grid(
+            row=0, column=1, padx=5, pady=3, sticky="w"
+        )
+        ttk.Label(self, text="Original", font=("TkDefaultFont", 10, "bold")).grid(
+            row=0, column=2, padx=5, pady=3, sticky="w"
+        )
+        ttk.Label(self, text="Valeur à appliquer", font=("TkDefaultFont", 10, "bold")).grid(
+            row=0, column=4, padx=5, pady=3, sticky="w"
+        )
+
+    def _create_cover_widgets(self):
+        """Crée les canvas pour les couvertures."""
         self.cover_orig_canvas = tk.Canvas(
             self,
             width=GUI_COVER_SIZE[0],
@@ -82,24 +104,8 @@ class ComparisonFrame(ttk.LabelFrame):
         )
         self.cover_final_canvas.grid(row=1, column=5, rowspan=20, padx=6, pady=6, sticky="n")
 
-        # ... (Labels et En-têtes, identique) ...
-        ttk.Label(self, text="Couverture originale", font=("TkDefaultFont", 9, "bold")).grid(
-            row=0, column=0, padx=6, pady=3, sticky="w"
-        )
-        ttk.Label(self, text="Couverture suggérée", font=("TkDefaultFont", 9, "bold")).grid(
-            row=0, column=5, padx=6, pady=3, sticky="w"
-        )
-        ttk.Label(self, text="Champ", font=("TkDefaultFont", 10, "bold")).grid(
-            row=0, column=1, padx=5, pady=3, sticky="w"
-        )
-        ttk.Label(self, text="Original", font=("TkDefaultFont", 10, "bold")).grid(
-            row=0, column=2, padx=5, pady=3, sticky="w"
-        )
-        ttk.Label(self, text="Valeur à appliquer", font=("TkDefaultFont", 10, "bold")).grid(
-            row=0, column=4, padx=5, pady=3, sticky="w"
-        )
-
-        # --- Champs dynamiques (Modification du bouton 'use_btn') ---
+    def _create_metadata_fields(self):
+        """Crée les champs de métadonnées (titre, auteurs, etc.)."""
         fields = [
             "title",
             "authors",
@@ -107,57 +113,76 @@ class ComparisonFrame(ttk.LabelFrame):
             "isbn",
             "language",
             "publication_date",
-            "summary",
             "tags",
         ]
         row_idx = 0
         for i, field in enumerate(fields, start=1):
             row_idx = i
-            # ... (Logique d'affichage des champs identique) ...
-            field_label = field.replace("_", " ").capitalize()
-            ttk.Label(self, text=field_label).grid(row=i, column=1, padx=5, pady=5, sticky="w")
+            self._create_field_row(field, row_idx)
 
-            self.detail_vars[field] = {"orig": tk.StringVar(), "final": tk.StringVar()}
-            self.detail_entries[field] = {}
+        # Champ Résumé (summary) géré séparément
+        row_idx += 1
+        self._create_summary_row(row_idx)
 
-            if field == "summary":
-                orig_text = tk.Text(self, height=3, width=30, state="disabled", wrap=tk.WORD)
-                orig_text.grid(row=i, column=2, sticky="ew", padx=5)
-                self.detail_entries[field]["orig"] = orig_text
-                final_text = tk.Text(self, height=3, width=30, wrap=tk.WORD)
-                final_text.grid(row=i, column=4, sticky="ew", padx=5)
-                self.detail_entries[field]["final"] = final_text
-            else:
-                orig_entry = ttk.Entry(
-                    self, textvariable=self.detail_vars[field]["orig"], state="readonly"
-                )
-                orig_entry.grid(row=i, column=2, sticky="ew", padx=5)
-                self.detail_entries[field]["orig"] = orig_entry
-                final_entry = ttk.Entry(self, textvariable=self.detail_vars[field]["final"])
-                final_entry.grid(row=i, column=4, sticky="ew", padx=5)
-                self.detail_entries[field]["final"] = final_entry
-
-            # *** MODIFICATION ICI ***
-            # Le bouton appelle maintenant le callback
-            use_btn = ttk.Button(
-                self,
-                text="→",
-                width=4,
-                command=lambda f=field: self.on_use_original_field(f),
-            )
-            use_btn.grid(row=i, column=3, padx=2, pady=2)
-
-        # --- Bouton utiliser cover (Modification) ---
+        # Bouton "Utiliser cette couverture"
         ttk.Button(
             self,
             text="Utiliser cette couverture →",
             command=self.on_use_original_cover,  # Appelle le callback
         ).grid(row=row_idx + 1, column=0, columnspan=2, pady=(10, 6))
 
-        # --- Cadre pour la liste des éditions (Identique) ---
+    def _create_field_row(self, field: str, row: int):
+        """Crée une ligne de widgets pour un champ spécifique."""
+        ttk.Label(self, text=field.replace("_", " ").capitalize()).grid(
+            row=row, column=1, padx=5, pady=5, sticky="w"
+        )
+        self.detail_vars[field] = {"orig": tk.StringVar(), "final": tk.StringVar()}
+
+        orig_entry = ttk.Entry(self, textvariable=self.detail_vars[field]["orig"], state="readonly")
+        orig_entry.grid(row=row, column=2, sticky="ew", padx=5)
+
+        final_entry = ttk.Entry(self, textvariable=self.detail_vars[field]["final"])
+        final_entry.grid(row=row, column=4, sticky="ew", padx=5)
+
+        self.detail_entries[field] = {"orig": orig_entry, "final": final_entry}
+
+        use_btn = ttk.Button(
+            self,
+            text="→",
+            width=4,
+            command=lambda f=field: self.on_use_original_field(f),
+        )
+        use_btn.grid(row=row, column=3, padx=2, pady=2)
+
+    def _create_summary_row(self, row: int):
+        """Crée la ligne de widgets pour le champ résumé (Text)."""
+        field = "summary"
+        ttk.Label(self, text="Summary").grid(row=row, column=1, padx=5, pady=5, sticky="w")
+        # Pas de StringVar pour les widgets Text
+        self.detail_vars[field] = {"orig": None, "final": None}
+
+        orig_text = tk.Text(self, height=3, width=30, state="disabled", wrap=tk.WORD)
+        orig_text.grid(row=row, column=2, sticky="ew", padx=5)
+
+        final_text = tk.Text(self, height=3, width=30, wrap=tk.WORD)
+        final_text.grid(row=row, column=4, sticky="ew", padx=5)
+
+        self.detail_entries[field] = {"orig": orig_text, "final": final_text}
+
+        use_btn = ttk.Button(
+            self,
+            text="→",
+            width=4,
+            command=lambda f=field: self.on_use_original_field(f),
+        )
+        use_btn.grid(row=row, column=3, padx=2, pady=2)
+
+    def _create_editions_tree(self):
+        """Crée le treeview pour les éditions trouvées."""
         editions_frame = ttk.LabelFrame(self, text="Éditions trouvées (OpenLibrary)")
+        # Place le cadre après les champs de métadonnées
         editions_frame.grid(
-            row=row_idx + 2,
+            row=20,  # Row 20 (assez bas pour être en dessous des champs)
             column=1,
             columnspan=4,
             sticky="ew",
@@ -168,7 +193,7 @@ class ComparisonFrame(ttk.LabelFrame):
 
         cols = ("title", "authors", "isbn", "year", "lang", "quality")
         self.editions_tree = ttk.Treeview(editions_frame, columns=cols, show="headings", height=6)
-        # ... (Configuration du Treeview identique) ...
+
         column_configs = {
             "title": {"width": 250, "anchor": "w"},
             "authors": {"width": 200, "anchor": "w"},
@@ -181,6 +206,7 @@ class ComparisonFrame(ttk.LabelFrame):
             self.editions_tree.heading(c, text=c.capitalize())
             config = column_configs.get(c, {"width": 120, "anchor": "w"})
             self.editions_tree.column(c, width=config["width"], anchor=config["anchor"])
+
         scrollbar = ttk.Scrollbar(
             editions_frame, orient=tk.VERTICAL, command=self.editions_tree.yview
         )
@@ -190,9 +216,9 @@ class ComparisonFrame(ttk.LabelFrame):
         editions_frame.rowconfigure(0, weight=1)
         self.editions_tree.bind("<<TreeviewSelect>>", self._on_edition_selected_from_tree)
 
-    # --- MÉTHODE DE DESSIN DE COUVERTURE (Identique) ---
+    # --- MÉTHODE DE DESSIN DE COUVERTURE ---
     def draw_cover(self, canvas: tk.Canvas, data: Union[bytes, None]):
-        # ... (Aucun changement) ...
+        """Dessine l'image de couverture sur le canvas fourni."""
         canvas.delete("all")
         w, h = GUI_COVER_SIZE
         if not data:
@@ -210,7 +236,7 @@ class ComparisonFrame(ttk.LabelFrame):
             original_size = pil.size
             pil.thumbnail((w, h), Image.Resampling.LANCZOS)
             img = ImageTk.PhotoImage(pil)
-            canvas.image = img
+            canvas.image = img  # Garder une référence
             canvas.create_image(w // 2, h // 2, image=img)
             info_height = 30
             canvas.create_rectangle(0, h - info_height, w, h, fill="#222222", outline="")
@@ -243,54 +269,78 @@ class ComparisonFrame(ttk.LabelFrame):
                 font=("TkDefaultFont", 9, "bold"),
             )
 
-    # --- CHARGEMENT / SAUVEGARDE (Identique) ---
+    # --- CHARGEMENT / SAUVEGARDE ---
     def load_meta(self, meta: Union["EpubMeta", None]):
-        # ... (Aucun changement) ...
+        """Charge un objet EpubMeta dans les widgets de comparaison."""
         self.current_meta = meta
         if meta is None:
             self.clear_details()
             return
 
-        def format_list(items) -> str:
-            return ", ".join(items) if items else ""
+        self._load_meta_fields(meta)
+        self._load_summary_field(meta)
 
-        self.detail_vars["title"]["orig"].set(meta.original_title or "")
-        self.detail_vars["authors"]["orig"].set(format_list(meta.original_authors))
-        self.detail_vars["publisher"]["orig"].set(meta.original_publisher or "")
-        self.detail_vars["publication_date"]["orig"].set(meta.original_publication_date or "")
-        self.detail_vars["isbn"]["orig"].set(meta.original_isbn or "")
-        self.detail_vars["language"]["orig"].set(meta.original_language or "")
-        self.detail_vars["tags"]["orig"].set(format_list(meta.original_tags))
-        self.detail_vars["title"]["final"].set(meta.suggested_title or "")
-        self.detail_vars["authors"]["final"].set(format_list(meta.suggested_authors))
-        self.detail_vars["publisher"]["final"].set(meta.suggested_publisher or "")
-        self.detail_vars["publication_date"]["final"].set(meta.suggested_publication_date or "")
-        self.detail_vars["isbn"]["final"].set(meta.suggested_isbn or "")
-        self.detail_vars["language"]["final"].set(meta.suggested_language or "")
-        self.detail_vars["tags"]["final"].set(format_list(meta.suggested_tags))
-        orig_text = self.detail_entries["summary"]["orig"]
-        orig_text.config(state="normal")
-        orig_text.delete(1.0, tk.END)
-        orig_text.insert(1.0, meta.original_summary or "")
-        orig_text.config(state="disabled")
-        final_text = self.detail_entries["summary"]["final"]
-        final_text.delete(1.0, tk.END)
-        final_text.insert(1.0, meta.suggested_summary or "")
         self.draw_cover(self.cover_orig_canvas, meta.original_cover_data)
         self.draw_cover(self.cover_final_canvas, meta.suggested_cover_data)
         self._populate_editions_tree(meta)
         self.update_comparison_colors()
 
+    def _load_meta_fields(self, meta: "EpubMeta"):
+        """Charge les champs textuels simples."""
+
+        def format_list(items) -> str:
+            return ", ".join(items) if items else ""
+
+        fields_to_load = [
+            ("title", meta.original_title, meta.suggested_title),
+            ("publisher", meta.original_publisher, meta.suggested_publisher),
+            ("publication_date", meta.original_publication_date, meta.suggested_publication_date),
+            ("isbn", meta.original_isbn, meta.suggested_isbn),
+            ("language", meta.original_language, meta.suggested_language),
+        ]
+        for field, orig_val, final_val in fields_to_load:
+            if field in self.detail_vars:
+                self.detail_vars[field]["orig"].set(orig_val or "")
+                self.detail_vars[field]["final"].set(final_val or "")
+
+        # Champs de liste
+        if "authors" in self.detail_vars:
+            self.detail_vars["authors"]["orig"].set(format_list(meta.original_authors))
+            self.detail_vars["authors"]["final"].set(format_list(meta.suggested_authors))
+        if "tags" in self.detail_vars:
+            self.detail_vars["tags"]["orig"].set(format_list(meta.original_tags))
+            self.detail_vars["tags"]["final"].set(format_list(meta.suggested_tags))
+
+    def _load_summary_field(self, meta: "EpubMeta"):
+        """Charge le champ résumé (widget Text)."""
+        if "summary" not in self.detail_entries:
+            return
+
+        orig_text = self.detail_entries["summary"]["orig"]
+        orig_text.config(state="normal")
+        orig_text.delete(1.0, tk.END)
+        orig_text.insert(1.0, meta.original_summary or "")
+        orig_text.config(state="disabled")
+
+        final_text = self.detail_entries["summary"]["final"]
+        final_text.delete(1.0, tk.END)
+        final_text.insert(1.0, meta.suggested_summary or "")
+
     def clear_details(self):
-        # ... (Aucun changement) ...
+        """Vide tous les champs de détails."""
         self.current_meta = None
-        for field_vars in self.detail_vars.values():
-            field_vars["orig"].set("")
-            field_vars["final"].set("")
-        self.detail_entries["summary"]["orig"].config(state="normal")
-        self.detail_entries["summary"]["orig"].delete(1.0, tk.END)
-        self.detail_entries["summary"]["orig"].config(state="disabled")
-        self.detail_entries["summary"]["final"].delete(1.0, tk.END)
+        for field, vars_dict in self.detail_vars.items():
+            if vars_dict["orig"] is not None:
+                vars_dict["orig"].set("")
+            if vars_dict["final"] is not None:
+                vars_dict["final"].set("")
+
+        if "summary" in self.detail_entries:
+            self.detail_entries["summary"]["orig"].config(state="normal")
+            self.detail_entries["summary"]["orig"].delete(1.0, tk.END)
+            self.detail_entries["summary"]["orig"].config(state="disabled")
+            self.detail_entries["summary"]["final"].delete(1.0, tk.END)
+
         self.update_comparison_colors()
         self.draw_cover(self.cover_orig_canvas, None)
         self.draw_cover(self.cover_final_canvas, None)
@@ -298,10 +348,9 @@ class ComparisonFrame(ttk.LabelFrame):
             self._populate_editions_tree(None)
 
     def save_final_values_to_model(self):
-        # ... (Aucun changement) ...
+        """Sauvegarde les valeurs "finales" de l'interface vers l'objet meta."""
         if not self.current_meta:
             return
-        meta = self.current_meta
 
         def to_list(val: str) -> List[str]:
             stripped_val = val.strip()
@@ -309,40 +358,74 @@ class ComparisonFrame(ttk.LabelFrame):
                 return []
             return [v.strip() for v in stripped_val.split(",") if v.strip()]
 
-        final_title = self.detail_vars["title"]["final"].get().strip()
-        final_authors_str = self.detail_vars["authors"]["final"].get()
-        final_publisher = self.detail_vars["publisher"]["final"].get().strip()
-        final_isbn = self.detail_vars["isbn"]["final"].get().strip()
-        final_language = self.detail_vars["language"]["final"].get().strip()
-        final_date = self.detail_vars["publication_date"]["final"].get().strip()
-        final_tags_str = self.detail_vars["tags"]["final"].get()
-        final_summary = self.detail_entries["summary"]["final"].get(1.0, tk.END).strip()
-        final_authors = to_list(final_authors_str)
-        final_tags = to_list(final_tags_str)
-        meta.suggested_title = final_title or meta.original_title
-        meta.suggested_authors = final_authors or meta.original_authors
-        meta.suggested_publisher = final_publisher or meta.original_publisher
-        meta.suggested_isbn = final_isbn or meta.original_isbn
-        meta.suggested_language = final_language or meta.original_language
-        meta.suggested_publication_date = final_date or meta.original_publication_date
-        meta.suggested_tags = final_tags or meta.original_tags
-        meta.suggested_summary = final_summary or meta.original_summary
+        # Déléguer à des sous-méthodes
+        self._save_text_fields(self.current_meta, to_list)
+        self._save_summary_field(self.current_meta)
+
+        # Appliquer les valeurs par défaut si le champ suggéré est vide
+        meta = self.current_meta
+        meta.suggested_title = meta.suggested_title or meta.original_title
+        meta.suggested_authors = meta.suggested_authors or meta.original_authors
+        meta.suggested_publisher = meta.suggested_publisher or meta.original_publisher
+        meta.suggested_isbn = meta.suggested_isbn or meta.original_isbn
+        meta.suggested_language = meta.suggested_language or meta.original_language
+        meta.suggested_publication_date = (
+            meta.suggested_publication_date or meta.original_publication_date
+        )
+        meta.suggested_tags = meta.suggested_tags or meta.original_tags
+        meta.suggested_summary = meta.suggested_summary or meta.original_summary
+
         logger.debug("Saved final values from GUI to model for %s", meta.filename)
 
+    def _save_text_fields(self, meta: "EpubMeta", to_list_func: Callable):
+        """Sauvegarde les champs textuels simples depuis les StringVars."""
+        meta.suggested_title = self.detail_vars["title"]["final"].get().strip()
+        meta.suggested_publisher = self.detail_vars["publisher"]["final"].get().strip()
+        meta.suggested_isbn = self.detail_vars["isbn"]["final"].get().strip()
+        meta.suggested_language = self.detail_vars["language"]["final"].get().strip()
+        meta.suggested_publication_date = (
+            self.detail_vars["publication_date"]["final"].get().strip()
+        )
+
+        # Listes
+        final_authors_str = self.detail_vars["authors"]["final"].get()
+        meta.suggested_authors = to_list_func(final_authors_str)
+        final_tags_str = self.detail_vars["tags"]["final"].get()
+        meta.suggested_tags = to_list_func(final_tags_str)
+
+    def _save_summary_field(self, meta: "EpubMeta"):
+        """Sauvegarde le champ résumé (widget Text)."""
+        if "summary" in self.detail_entries:
+            final_summary = self.detail_entries["summary"]["final"].get(1.0, tk.END).strip()
+            meta.suggested_summary = final_summary
+
     def update_comparison_colors(self):
-        # ... (Aucun changement) ...
+        """Met à jour les couleurs de fond pour montrer les différences."""
         style = ttk.Style()
         style.configure("OrigDiff.TEntry", fieldbackground="#FFDDDD")
         style.configure("FinalDiff.TEntry", fieldbackground="#DDFFDD")
         TEXT_ORIG_DIFF_BG = "#FFDDDD"
         TEXT_FINAL_DIFF_BG = "#DDFFDD"
-        TEXT_DEFAULT_BG = "white"
+        TEXT_DEFAULT_BG = "white"  # ou self.default_entry_bg
+
         for field, vars_dict in self.detail_vars.items():
-            orig_val = vars_dict["orig"].get()
-            final_val = vars_dict["final"].get()
+            if field not in self.detail_entries:
+                continue
+
             orig_entry = self.detail_entries[field]["orig"]
             final_entry = self.detail_entries[field]["final"]
             is_text_widget = isinstance(orig_entry, tk.Text)
+
+            orig_val = ""
+            final_val = ""
+
+            if is_text_widget:
+                orig_val = orig_entry.get(1.0, tk.END).strip()
+                final_val = final_entry.get(1.0, tk.END).strip()
+            else:
+                orig_val = vars_dict["orig"].get().strip()
+                final_val = vars_dict["final"].get().strip()
+
             if final_val and orig_val != final_val:
                 if is_text_widget:
                     orig_entry.configure(background=TEXT_ORIG_DIFF_BG)
@@ -358,9 +441,9 @@ class ComparisonFrame(ttk.LabelFrame):
                     orig_entry.configure(style="TEntry")
                     final_entry.configure(style="TEntry")
 
-    # --- GESTION DES ÉDITIONS (Modification de _on_edition_selected_from_tree) ---
+    # --- GESTION DES ÉDITIONS ---
     def _populate_editions_tree(self, meta: Union["EpubMeta", None]):
-        # ... (Aucun changement) ...
+        """Remplit le Treeview des éditions trouvées."""
         if not self.editions_tree:
             return
         self.editions_tree.delete(*self.editions_tree.get_children())
@@ -369,6 +452,7 @@ class ComparisonFrame(ttk.LabelFrame):
                 "", "end", iid="0", values=("Aucune autre édition trouvée.", "", "", "", "")
             )
             return
+
         for i, doc in enumerate(meta.found_editions):
             details = doc.get("edition_details") or doc.get("work_details") or doc
             title = details.get("title", doc.get("title", ""))
@@ -416,11 +500,12 @@ class ComparisonFrame(ttk.LabelFrame):
 
     def _on_edition_selected_from_tree(self, event=None):
         """Appelé lors de la sélection d'une édition dans l'arbre."""
-        if not self.current_meta:
+        if not self.current_meta or not self.editions_tree:
             return
         selection = self.editions_tree.selection()
         if not selection:
             return
+
         selected_index = int(selection[0])
         if not hasattr(self.current_meta, "found_editions") or selected_index >= len(
             self.current_meta.found_editions
@@ -432,17 +517,17 @@ class ComparisonFrame(ttk.LabelFrame):
         self._apply_doc_to_final_fields(selected_doc)
         self.update_comparison_colors()
 
-        # *** MODIFICATION ICI ***
         # Demander au contrôleur principal de retélécharger la couverture
         if self.current_meta.suggested_cover_data and self.on_edition_selected_cover:
             self.on_edition_selected_cover(self.current_meta)
 
     def _apply_doc_to_final_fields(self, doc: Dict):
-        # ... (Aucun changement) ...
+        """Applique les champs d'un document (édition) aux champs 'final'."""
         if not self.current_meta:
             return
         meta = self.current_meta
         details = doc.get("edition_details") or doc.get("work_details") or doc
+
         title = details.get("title", doc.get("title", ""))
         authors_list = (
             details.get("author_name")
@@ -472,6 +557,7 @@ class ComparisonFrame(ttk.LabelFrame):
             )
         else:
             lang = ", ".join(langs_obj or [])
+
         isbn_list = details.get("isbn_13", []) + details.get("isbn_10", [])
         isbns = ", ".join(isbn_list[:1] or doc.get("isbn", [])[:1])
         pubs_obj = details.get("publishers", doc.get("publisher", []))
@@ -484,6 +570,7 @@ class ComparisonFrame(ttk.LabelFrame):
             publisher = ", ".join([p.get("name") for p in pubs_obj if p.get("name")])
         else:
             publisher = ", ".join(pubs_obj or [])
+
         year = (
             details.get("publish_date")
             or str(details.get("first_publish_year", ""))
@@ -491,6 +578,7 @@ class ComparisonFrame(ttk.LabelFrame):
         )
         tags = details.get("subject", doc.get("subject", []))
         cover_data = details.get("cover", doc.get("cover"))
+
         self.detail_vars["title"]["final"].set(title or "")
         self.detail_vars["authors"]["final"].set(", ".join(authors_list or []))
         self.detail_vars["publisher"]["final"].set(publisher or "")

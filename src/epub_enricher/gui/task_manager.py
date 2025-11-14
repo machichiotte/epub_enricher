@@ -16,8 +16,6 @@ from . import helpers
 if TYPE_CHECKING:
     from ..core.models import EpubMeta
 
-    # L'importation de "EnricherGUI" n'est plus nécessaire
-
 logger = logging.getLogger(__name__)
 
 # --- TÂCHE DE FETCH ---
@@ -70,10 +68,11 @@ def _fetch_openlibrary_data(meta: "EpubMeta") -> Dict:
 def _download_cover_data(meta: "EpubMeta"):
     """Sous-méthode pour le téléchargement de la couverture."""
     cover_id_or_url = meta.suggested_cover_data
-    meta.suggested_cover_data = None
+    meta.suggested_cover_data = None  # Effacer l'ID/URL
 
     if cover_id_or_url:
         try:
+            # Stocker les données binaires
             meta.suggested_cover_data = download_cover(cover_id_or_url)
         except Exception:
             logger.exception("Failed to download cover")
@@ -121,22 +120,31 @@ def _apply_worker(
     """Logique exécutée dans le thread d'application."""
     any_changed = False
     for m in metas:
-        try:
-            success = update_epub_with_metadata(m.path, m)
-            if success:
-                m.note = "Updated"
-                helpers.apply_suggestions_to_model(m)
-                helpers.reset_suggestions_on_model(m)
-                rename_epub_file(m)
-                any_changed = True
-            else:
-                m.note = m.note or "Failed"
-        except Exception as e:
-            m.note = f"Error applying: {e}"
-            logger.exception("Apply accepted failed for %s", m.filename)
+        success = _apply_single_meta(m)
+        if success:
+            any_changed = True
 
     if any_changed:
         # Signaler la complétion
         on_complete()
         # Demander l'affichage d'un message de succès
         on_success_message("Changes applied (check backup folder if needed)")
+
+
+def _apply_single_meta(m: "EpubMeta") -> bool:
+    """Tente d'appliquer les modifications à un seul fichier EPUB."""
+    try:
+        success = update_epub_with_metadata(m.path, m)
+        if success:
+            m.note = "Updated"
+            helpers.apply_suggestions_to_model(m)
+            helpers.reset_suggestions_on_model(m)
+            rename_epub_file(m)
+            return True
+        else:
+            m.note = m.note or "Failed"
+            return False
+    except Exception as e:
+        m.note = f"Error applying: {e}"
+        logger.exception("Apply accepted failed for %s", m.filename)
+        return False

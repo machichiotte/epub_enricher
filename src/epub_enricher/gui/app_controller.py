@@ -38,32 +38,36 @@ class AppController:
 
         new_meta_list = []
         for p in files:
-            try:
-                res = extract_metadata(p)
-
-                meta_obj = EpubMeta(
-                    path=p,
-                    filename=os.path.basename(p),
-                    original_title=res.get("title"),
-                    original_authors=res.get("authors"),
-                    original_isbn=res.get("identifier"),
-                    original_language=res.get("language"),
-                    original_tags=res.get("tags"),
-                    original_publisher=res.get("publisher"),
-                    original_publication_date=res.get("date"),
-                    original_cover_data=res.get("cover_data"),
-                    original_summary=res.get("summary"),
-                )
-
-                # Attribut requis par la GUI
-                meta_obj.found_editions = []
+            meta_obj = self._create_meta_from_file(p)
+            if meta_obj:
                 new_meta_list.append(meta_obj)
-
-            except Exception as e:
-                logger.error(f"Échec de l'extraction des métadonnées pour {p}: {e}")
 
         self.meta_list = new_meta_list
         logger.info(f"{len(self.meta_list)} EPUBs chargés.")
+
+    def _create_meta_from_file(self, p: str) -> EpubMeta | None:
+        """Tente d'extraire les métadonnées et de créer un objet EpubMeta."""
+        try:
+            res = extract_metadata(p)
+            meta_obj = EpubMeta(
+                path=p,
+                filename=os.path.basename(p),
+                original_title=res.get("title"),
+                original_authors=res.get("authors"),
+                original_isbn=res.get("identifier"),
+                original_language=res.get("language"),
+                original_tags=res.get("tags"),
+                original_publisher=res.get("publisher"),
+                original_publication_date=res.get("date"),
+                original_cover_data=res.get("cover_data"),
+                original_summary=res.get("summary"),
+            )
+            # Attribut requis par la GUI
+            meta_obj.found_editions = []
+            return meta_obj
+        except Exception as e:
+            logger.error(f"Échec de l'extraction des métadonnées pour {p}: {e}")
+            return None
 
     def get_all_meta(self) -> List[EpubMeta]:
         """Retourne la liste complète des métadonnées."""
