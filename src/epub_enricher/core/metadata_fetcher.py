@@ -3,377 +3,199 @@
 Logique pour interroger les APIs (OpenLibrary) et récupérer les métadonnées
 """
 
-import hashlib
-import json
 import logging
 import os
-import random
-import time
-from functools import wraps
-from typing import Callable, Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
-import requests
+from epub_enricher.core.network_utils import http_download_bytes, http_get
+from epub_enricher.core.text_utils import clean_text
 
 from ..config import (
-    API_TIMEOUT,
     COVER_CACHE_DIR,
-    INITIAL_BACKOFF,
-    JITTER,
-    MAX_BACKOFF,
-    MAX_RETRIES,
     OPENLIB_BOOK,
     OPENLIB_SEARCH,
     ensure_directories,
 )
-from .external_apis import fetch_genre_and_summary_from_sources
 
 logger = logging.getLogger(__name__)
 OPENLIB_BASE = "https://openlibrary.org"
 
 
 # ======================================================================
-# --- Infrastructure réseau : retry + HTTP ---
+# --- OpenLibrary Logic ---
 # ======================================================================
 
 
-def retry_backoff(
-    max_retries: int = MAX_RETRIES,
-    initial_backoff: float = INITIAL_BACKOFF,
-    max_backoff: float = MAX_BACKOFF,
-    jitter: float = JITTER,
-    allowed_exceptions: tuple = (requests.RequestException,),
-):
-    """Decorator for retrying functions with exponential backoff + jitter."""
-
-    def deco(func: Callable):
-        @wraps(func)
-        def wrapper(*args, **kwargs):
-            backoff = initial_backoff
-            for attempt in range(1, max_retries + 1):
-                try:
-                    logger.debug("Attempt %d for %s", attempt, func.__name__)
-                    return func(*args, **kwargs)
-                except allowed_exceptions as e:
-                    if attempt == max_retries:
-                        logger.exception("Max retries reached for %s", func.__name__)
-                        raise
-                    sleep_time = backoff * (1 + random.uniform(-jitter, jitter))
-                    sleep_time = max(0.0, min(max_backoff, sleep_time))
-                    logger.warning(
-                        "Error on attempt %d for %s: %s -- backing off %.2fs",
-                        attempt,
-                        func.__name__,
-                        e,
-                        sleep_time,
-                    )
-                    time.sleep(sleep_time)
-                    backoff = min(max_backoff, backoff * 2)
-                except Exception:
-                    logger.exception("Non-retryable exception in %s", func.__name__)
-                    raise
-
-        return wrapper
-
-    return deco
-
-
-@retry_backoff()
-def http_get(
-    url: str,
-    params: Optional[Dict[str, str]] = None,
-    headers: Optional[Dict[str, str]] = None,
-    timeout: int = API_TIMEOUT,
-) -> requests.Response:
-    """Effectue une requête HTTP GET avec retry automatique."""
-    logger.debug("HTTP GET %s params=%s", url, params)
-    r = requests.get(url, params=params, headers=headers, timeout=timeout)
-    r.raise_for_status()
-    return r
-
-
-@retry_backoff()
-def http_download_bytes(url: str, timeout: int = API_TIMEOUT) -> bytes:
-    """Télécharge des données binaires avec retry automatique."""
-    logger.debug("Downloading bytes from %s", url)
-    r = requests.get(url, timeout=timeout)
-    r.raise_for_status()
-    return r.content
-
-
-# ======================================================================
-# --- Fonctions principales de récupération de données ---
-# ======================================================================
-
-
-def fetch_openlibrary_work_details(work_key: str) -> dict:
-    """Récupère les détails complets d'une œuvre OpenLibrary (/works/xxx.json)."""
-    url = f"{OPENLIB_BASE}{work_key}.json"
+def _fetch_work_details(work_id: str) -> Optional[Dict]:
+    """Récupère les détails de l'Œuvre (Work) OpenLibrary."""
+    url = f"{OPENLIB_BASE}/works/{work_id}.json"
     try:
-        r = requests.get(url, timeout=10)
-        if r.status_code == 200:
-            data = r.json()
-            logger.info(f"Fetched work details for {work_key}")
-            return data
-        else:
-            logger.warning(f"Work {work_key} not found: {r.status_code}")
+        r = http_get(url)
+        return r.json()
     except Exception as e:
-        logger.error(f"Error fetching work {work_key}: {e}")
-    return {}
-
-
-def fetch_openlibrary_edition_details(edition_key: str) -> dict:
-    """Récupère les détails complets d'une édition OpenLibrary (/books/xxx.json)."""
-
-    # S'assurer que la clé n'a pas de préfixe (ex: /books/OL123M -> OL123M)
-    if edition_key.startswith("/books/"):
-        edition_key = edition_key.replace("/books/", "")
-
-    url = f"{OPENLIB_BASE}/books/{edition_key}.json"
-    try:
-        # On utilise requests.get directement, comme fetch_openlibrary_work_details
-        r = requests.get(url, timeout=10)
-        if r.status_code == 200:
-            data = r.json()
-            logger.info(f"Fetched edition details for {edition_key}")
-            return data
-        else:
-            logger.warning(f"Edition {edition_key} not found: {r.status_code}")
-    except Exception as e:
-        logger.error(f"Error fetching edition {edition_key}: {e}")
-    return {}
-
-
-def query_openlibrary_full(
-    title: Optional[str] = None, authors: Optional[List[str]] = None, isbn: Optional[str] = None
-) -> Dict[str, List[Dict]]:
-    """
-    Combine les recherches par ISBN et par (titre + auteur) pour regrouper toutes les éditions
-    d'une même œuvre. Retourne un dict avec 'by_isbn' et 'related_docs'.
-    """
-    results = {"by_isbn": None, "related_docs": []}
-
-    # 1️⃣ Recherche directe par ISBN
-    if isbn:
-        data = query_openlibrary_by_isbn(isbn)
-        if data:
-            results["by_isbn"] = data
-
-    # 2️⃣ Recherche complémentaire par titre/auteur
-    if title:
-        auth = authors[0] if authors else None
-        docs = query_openlibrary_search_all(title, auth)
-        if docs:
-            results["related_docs"] = docs
-
-    # 3️⃣ Récupération des détails des œuvres (works)
-    for doc in results.get("related_docs", []):
-        work_key = doc.get("key")
-        if work_key:
-            work_data = fetch_openlibrary_work_details(work_key)
-            if work_data:
-                doc["work_details"] = work_data
-        edition_key = doc.get("cover_edition_key")
-        if edition_key:
-            # La fonction fetch_openlibrary_edition_details gère déjà
-            # le préfixe /books/ si besoin.
-            edition_data = fetch_openlibrary_edition_details(edition_key)
-            if edition_data:
-                doc["edition_details"] = edition_data
-
-    # --- LOGS DÉTAILLÉS POUR DIAGNOSTIC ---
-    if results.get("by_isbn"):
-        data = results["by_isbn"]
-        publishers = data.get("publishers", [])
-        if publishers and isinstance(publishers[0], dict):
-            publisher_name = publishers[0].get("name", "")
-        elif publishers and isinstance(publishers[0], str):
-            publisher_name = publishers[0]
-        else:
-            publisher_name = ""
-
-        isbn_list = data.get("isbn_13", []) + data.get("isbn_10", [])
-        langs = [
-            lang_entry.get("key", "").split("/")[-1]
-            for lang_entry in data.get("languages", [])
-            if isinstance(lang_entry, dict)
-        ]
-
-        logger.info("=== OpenLibrary ISBN metadata ===")
-        logger.info(
-            "Title: %s | Authors: %s | Publisher: %s | ISBN: %s | Lang: %s",
-            data.get("title"),
-            ", ".join([a.get("key", "").split("/")[-1] for a in data.get("authors", [])]),
-            publisher_name,
-            ", ".join(isbn_list),
-            ", ".join(langs),
-        )
-
-    docs = results.get("related_docs", [])
-    if docs:
-        logger.info("=== OpenLibrary related editions ===")
-        for i, doc in enumerate(docs, start=1):
-            title = doc.get("title", "")
-            authors = ", ".join(doc.get("author_name", [])) if doc.get("author_name") else ""
-            has_work = "✅" if "work_details" in doc else "❌"
-            has_edition = "✅" if "edition_details" in doc else "❌"  # Pour vérifier
-
-            # Valeurs par défaut (celles de la recherche, souvent vides)
-            lang = ", ".join(doc.get("language", [])) if doc.get("language") else ""
-            isbns = ", ".join(doc.get("isbn", [])[:3]) if doc.get("isbn") else ""
-            publisher = ", ".join(doc.get("publisher", [])) if doc.get("publisher") else ""
-            year = str(doc.get("first_publish_year", ""))
-
-            # Si on a les détails de l'édition, on les utilise car ils sont meilleurs
-            if "edition_details" in doc:
-                details = doc["edition_details"]
-
-                # Affiche toutes les clés principales reçues pour ce "edition"
-                logger.info(f"    -> Clés reçues pour Edition [{i}]: {list(details.keys())}")
-                logger.info(f"    -> Valeurs reçues pour Edition [{i}]: {details}")
-
-                # Langue
-                langs_obj = details.get("languages", [])
-                if langs_obj:
-                    lang = ", ".join(
-                        [
-                            lang_entry.get("key", "").split("/")[-1]
-                            for lang_entry in langs_obj
-                            if isinstance(lang_entry, dict)
-                        ]
-                    )
-
-                # ISBNs
-                isbn_list = details.get("isbn_13", []) + details.get("isbn_10", [])
-                if isbn_list:
-                    isbns = ", ".join(isbn_list[:3])  # Limite à 3
-
-                # Publisher
-                pubs_obj = details.get("publishers", [])
-                if pubs_obj:
-                    # Le format varie : parfois liste de strings, parfois liste de dicts
-                    if pubs_obj and isinstance(pubs_obj[0], dict):
-                        publisher = ", ".join([p.get("name") for p in pubs_obj if p.get("name")])
-                    else:
-                        publisher = ", ".join(pubs_obj)  # Liste de strings
-
-                # Année (plus précise depuis l'édition)
-                if details.get("publish_date"):
-                    year = details.get("publish_date")  # ex: "2018" ou "Juin 2018"
-
-            logger.info(
-                f"[{i}] {title} | Lang: {lang} | ISBN: {isbns} | Publisher: {publisher} | "
-                f"Year: {year} | Authors: {authors} | Work: {has_work} | Edition: {has_edition}"
-            )
-
-            # Ajout pour logger la description (si elle existe)
-            if "work_details" in doc:
-                details = doc["work_details"]
-
-                # Affiche toutes les clés principales reçues pour ce "work"
-                logger.info(f"    -> Clés reçues pour Work [{i}]: {list(details.keys())}")
-                logger.info(f"    -> Valeurs reçues pour Work [{i}]: {details}")
-
-                description = details.get("description", "Pas de description.")
-
-                # Parfois la description est un objet {"type": "...", "value": "..."}
-                if isinstance(description, dict):
-                    description = description.get("value", "Pas de description (format objet).")
-
-                # Limite l'affichage aux 200 premiers caractères pour éviter de noyer les logs
-                logger.info(f"    -> Description [{i}]: {description[:200]}...")
-
-    logger.info("===================================")
-    return results
-
-
-def query_openlibrary_search_all(title: str, author: Optional[str] = None) -> Optional[List[Dict]]:
-    """Retourne TOUTES les éditions correspondantes à un titre/auteur."""
-    try:
-        q = title
-        if author:
-            q += f" {author}"
-        params = {"q": q, "title": title, "limit": 20}
-        r = http_get(OPENLIB_SEARCH, params=params)
-        js = r.json()
-        docs = js.get("docs", [])
-        logger.info("OpenLibrary search returned %d docs for query %s", len(docs), q)
-
-        # 🧠 LOG COMPLET — pour visualiser la structure brute
-        logger.info("=== RAW DOCS FROM SEARCH ===")
-        logger.info(json.dumps(docs, indent=2, ensure_ascii=False))
-        logger.info("===================================")
-
-        return docs
-    except Exception as e:
-        logger.warning("query_openlibrary_search_all failed for %s / %s: %s", title, author, e)
-    return None
-
-
-def query_openlibrary_by_isbn(isbn: str) -> Optional[Dict]:
-    """Interroge OpenLibrary avec un ISBN pour récupérer les métadonnées."""
-    try:
-        params = {"bibkeys": f"ISBN:{isbn}", "format": "json", "jscmd": "data"}
-        r = http_get(OPENLIB_BOOK, params=params)
-        js = r.json()
-        key = f"ISBN:{isbn}"
-        if key in js:
-            logger.info("OpenLibrary returned data for ISBN %s", isbn)
-            return js[key]
-        logger.info("OpenLibrary no data for ISBN %s", isbn)
-    except Exception as e:
-        logger.warning("query_openlibrary_by_isbn failed for %s: %s", isbn, e)
-    return None
-
-
-def download_cover(url: str) -> Optional[bytes]:
-    """Télécharge et cache une image de couverture."""
-    try:
-        ensure_directories()
-        name = hashlib.sha1(url.encode("utf-8")).hexdigest() + ".jpg"
-        cache_name = os.path.join(COVER_CACHE_DIR, name)
-        if os.path.exists(cache_name):
-            with open(cache_name, "rb") as f:
-                logger.debug("Loaded cover from cache %s", cache_name)
-                return f.read()
-        b = http_download_bytes(url)
-        try:
-            with open(cache_name, "wb") as f:
-                f.write(b)
-            logger.debug("Cached cover to %s", cache_name)
-        except Exception:
-            logger.debug("Failed to cache cover %s", cache_name)
-        return b
-    except Exception as e:
-        logger.warning("download_cover failed for %s: %s", url, e)
+        logger.warning("Failed to fetch OL Work %s: %s", work_id, e)
         return None
 
 
-def fetch_genre_and_summary(
-    title: Optional[str] = None, authors: Optional[List[str]] = None, isbn: Optional[str] = None
-) -> Dict[str, Optional[str]]:
-    """
-    Récupère le genre et le résumé depuis plusieurs sources externes.
-
-    Args:
-        title: Titre du livre
-        authors: Liste des auteurs
-        isbn: ISBN du livre
-
-    Returns:
-        Dict avec 'genre' et 'summary' depuis différentes sources
-    """
+def _fetch_edition_details(edition_id: str) -> Optional[Dict]:
+    """Récupère les détails de l'Édition (Edition) OpenLibrary."""
+    url = f"{OPENLIB_BASE}/books/{edition_id}.json"
     try:
-        results = fetch_genre_and_summary_from_sources(title, authors, isbn)
+        r = http_get(url)
+        return r.json()
+    except Exception as e:
+        logger.warning("Failed to fetch OL Edition %s: %s", edition_id, e)
+        return None
+
+
+def extract_metadata_from_openlibrary(data: Dict, work_data: Optional[Dict]) -> Dict:
+    """Extrait et nettoie les métadonnées depuis les résultats de l'API OpenLibrary."""
+    metadata: Dict[str, Any] = {
+        "summary": None,
+        "tags": None,
+        "publication_date": None,
+        "publisher": None,
+    }
+
+    # 1. Résumé (Description) : Priorité à l'Œuvre, sinon l'Édition
+    description_raw = None
+    if work_data and work_data.get("description"):
+        description_raw = work_data["description"]
+    elif data.get("description"):
+        description_raw = data["description"]
+
+    if description_raw:
+        # La description peut être une chaîne ou un dict {'type': '/type/text', 'value': '...'}
+        summary = (
+            description_raw.get("value")
+            if isinstance(description_raw, dict)
+            else str(description_raw)
+        )
+        metadata["summary"] = clean_text(summary)
+
+    # 2. Sujets / Tags
+    tags = data.get("subjects") or data.get("tags")
+    if tags:
+        # Nettoyage des tags pour retirer les tags vides ou trop longs
+        metadata["tags"] = [clean_text(t) for t in tags if clean_text(t) and len(t) < 50]
+
+    # 3. Date et Éditeur
+    metadata["publication_date"] = data.get("publish_date")
+    metadata["publisher"] = data.get("publishers", [None])[0]
+
+    return metadata
+
+
+def query_openlibrary_full(
+    title: Optional[str] = None,
+    authors: Optional[List[str]] = None,
+    isbn: Optional[str] = None,
+) -> Dict[str, Any]:
+    """
+    Tente une recherche OpenLibrary complète (ISBN -> Work -> Edition).
+    Retourne les métadonnées enrichies.
+    """
+    result: Dict[str, Any] = {"summary": None, "tags": None, "cover_id": None}
+    work_id: Optional[str] = None
+    edition_id: Optional[str] = None
+
+    try:
+        # 1. Recherche initiale par ISBN ou titre/auteur
+        query_url = OPENLIB_BOOK if isbn else OPENLIB_SEARCH
+        params = {"q": isbn} if isbn else {"title": title, "author": authors[0]}
+
+        r = http_get(query_url, params=params)
+        data = r.json()
+
+        # 2. Trouver l'Edition/Work la plus pertinente
+        docs = data.get("docs")
+        if not docs:
+            logger.info("OL: No result found for query: %s", params)
+            return result
+
+        # Prioriser le premier résultat, mais chercher les IDs
+        doc = docs[0]
+        work_id = doc.get("key", "").replace("/works/", "")
+
+        # S'il n'y a pas de work_id, essayer de trouver une edition ID dans les ID existants
+        if not work_id:
+            edition_ids = doc.get("edition_key")
+            edition_id = edition_ids[0] if edition_ids else None
+            # On ne peut pas remonter au Work sans work_id, on s'arrête là pour la recherche avancée
+
+        # 3. Récupérer les détails de l'Œuvre (Work) si possible
+        work_data = _fetch_work_details(work_id) if work_id else None
+
+        # 4. Récupérer les détails de l'Édition pour la date/éditeur (si pas d'ISBN)
+        if edition_id:  # On fetch l'édition uniquement si on n'avait pas l'ISBN
+            edition_data = _fetch_edition_details(edition_id)
+        else:  # Si on a un ISBN, les détails de l'édition sont déjà dans 'doc' (première recherche)
+            edition_data = doc
+
+        # 5. Extraction finale
+        final_data = work_data if work_data else edition_data  # Priorité à l'œuvre pour le résumé
+        if final_data:
+            result.update(extract_metadata_from_openlibrary(edition_data, work_data))
+
+        # 6. ID de couverture (Open Library utilise un ID unique par travail ou édition)
+        result["cover_id"] = doc.get("cover_i")
 
         logger.info(
-            "Fetched genre and summary for '%s': genre=%s, summary=%s",
-            title or "Unknown",
-            results.get("genre", "None"),
-            "Yes" if results.get("summary") else "No",
+            "OL: Found metadata. Tags: %d, Summary: %s",
+            len(result["tags"]) if result["tags"] else 0,
+            "Yes" if result["summary"] else "No",
         )
 
-        return results
-
     except Exception as e:
-        logger.exception("Error fetching genre and summary: %s", e)
-        return {"genre": None, "summary": None, "sources": {}}
+        logger.warning("Failed during full OL fetch: %s", e)
+
+    return result
+
+
+# ======================================================================
+# --- Cover Cache Logic (Refactorisée pour être plus courte) ---
+# ======================================================================
+
+
+def _get_cover_from_cache(cover_id: int) -> Optional[bytes]:
+    """Tente de charger une couverture depuis le cache."""
+    cache_name = os.path.join(COVER_CACHE_DIR, f"{cover_id}.jpg")
+    if os.path.exists(cache_name):
+        with open(cache_name, "rb") as f:
+            logger.debug("Loaded cover from cache %s", cache_name)
+            return f.read()
+    return None
+
+
+def _download_and_cache_cover(cover_id: int, url: str) -> Optional[bytes]:
+    """Télécharge la couverture et la met en cache."""
+    cache_name = os.path.join(COVER_CACHE_DIR, f"{cover_id}.jpg")
+    try:
+        b = http_download_bytes(url)
+        with open(cache_name, "wb") as f:
+            f.write(b)
+        logger.debug("Cached cover to %s", cache_name)
+        return b
+    except Exception as e:
+        logger.warning("Failed to cache or download cover %s: %s", cache_name, e)
+        # Supprimer le fichier s'il a été partiellement écrit
+        if os.path.exists(cache_name):
+            os.remove(cache_name)
+        return None
+
+
+def download_cover(cover_id: int) -> Optional[bytes]:
+    """Télécharge la couverture depuis OpenLibrary, avec cache."""
+    if not cover_id:
+        return None
+
+    ensure_directories()
+
+    # 1. Vérifier le cache
+    cached_data = _get_cover_from_cache(cover_id)
+    if cached_data:
+        return cached_data
+
+    # 2. Télécharger et cacher
+    url = f"{OPENLIB_BASE}/b/id/{cover_id}-L.jpg"
+    return _download_and_cache_cover(cover_id, url)
