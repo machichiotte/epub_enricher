@@ -1,12 +1,12 @@
 # epub_enricher/src/epub_enricher/gui/task_manager.py
 """
 Gestionnaire des tâches de fond (threading) pour l'interface graphique.
-Sépare la logique de fetch et d'application de l'orchestrateur GUI.
+Logique de fetch et d'application découplée de l'UI.
 """
 
 import logging
 import threading
-from typing import TYPE_CHECKING, Dict, List
+from typing import TYPE_CHECKING, Callable, Dict, List
 
 from ..core.epub_metadata import update_epub_with_metadata
 from ..core.file_utils import rename_epub_file
@@ -15,32 +15,29 @@ from . import helpers
 
 if TYPE_CHECKING:
     from ..core.models import EpubMeta
-    from .main_window import EnricherGUI
+
+    # L'importation de "EnricherGUI" n'est plus nécessaire
 
 logger = logging.getLogger(__name__)
 
 # --- TÂCHE DE FETCH ---
 
 
-def start_fetch_task(app: "EnricherGUI", selection: List[str]):
+def start_fetch_task(metas_to_fetch: List["EpubMeta"], on_complete: Callable[[], None]):
     """Lance le thread de recherche de suggestions."""
-    threading.Thread(target=_fetch_worker, args=(app, selection), daemon=True).start()
+    logger.debug(f"Démarrage du Fetch Task pour {len(metas_to_fetch)} items.")
+    threading.Thread(target=_fetch_worker, args=(metas_to_fetch, on_complete), daemon=True).start()
 
 
-def _fetch_worker(app: "EnricherGUI", selection: List[str]):
+def _fetch_worker(metas: List["EpubMeta"], on_complete: Callable[[], None]):
     """Logique exécutée dans le thread de recherche."""
     changed = False
-    for s in selection:
-        idx = int(s)
-        meta = app.meta_list[idx]
+    for meta in metas:
         try:
-            # 1. Fetch OpenLibrary (Titre, Auteur, ISBN, etc.)
+            # 1. Fetch OpenLibrary
             _fetch_openlibrary_data(meta)
 
-            # 2. Fetch Genre & Summary (API séparée)
-            # _fetch_genre_summary_data(meta)
-
-            # 3. Download Cover (si URL trouvée)
+            # 2. Download Cover (si URL trouvée)
             _download_cover_data(meta)
 
             meta.processed = True
@@ -53,8 +50,8 @@ def _fetch_worker(app: "EnricherGUI", selection: List[str]):
             logger.exception("Fetch suggestions error for %s", meta.filename)
 
     if changed:
-        # Demander à la GUI de se rafraîchir
-        app.after(0, app.schedule_gui_refresh)
+        # Signaler à l'appelant (l'UI) que la tâche est terminée
+        on_complete()
 
 
 def _fetch_openlibrary_data(meta: "EpubMeta") -> Dict:
@@ -67,43 +64,68 @@ def _fetch_openlibrary_data(meta: "EpubMeta") -> Dict:
 
     # Stocker toutes les éditions trouvées dans le modèle
     meta.found_editions = res.get("related_docs", [])
-
     return res
 
 
 def _download_cover_data(meta: "EpubMeta"):
     """Sous-méthode pour le téléchargement de la couverture."""
-    # 1. Récupérer l'URL/ID (stocké temporairement dans ce champ)
     cover_id_or_url = meta.suggested_cover_data
-    # 2. Vider le champ (au cas où le téléchargement échoue)
     meta.suggested_cover_data = None
 
     if cover_id_or_url:
         try:
-            # 3. Télécharger et stocker les *octets* de l'image
             meta.suggested_cover_data = download_cover(cover_id_or_url)
         except Exception:
             logger.exception("Failed to download cover")
 
 
+# --- TÂCHE DE TÉLÉCHARGEMENT DE COUVERTURE (SÉPARÉE) ---
+
+
+def start_cover_download_task(meta: "EpubMeta", on_complete: Callable[[], None]):
+    """Lance un thread dédié juste pour télécharger une couverture."""
+    logger.debug(f"Démarrage du Download Cover Task pour {meta.filename}.")
+    threading.Thread(target=_cover_download_worker, args=(meta, on_complete), daemon=True).start()
+
+
+def _cover_download_worker(meta: "EpubMeta", on_complete: Callable[[], None]):
+    """Worker pour télécharger une seule couverture."""
+    try:
+        _download_cover_data(meta)
+        logger.debug(f"Couverture téléchargée pour {meta.filename}")
+    except Exception as e:
+        logger.error(f"Échec du téléchargement de la couverture pour {meta.filename}: {e}")
+    finally:
+        # Toujours appeler on_complete pour rafraîchir l'UI
+        on_complete()
+
+
 # --- TÂCHE D'APPLICATION ---
-def start_apply_task(app: "EnricherGUI", metas: List["EpubMeta"]):
+def start_apply_task(
+    metas: List["EpubMeta"],
+    on_complete: Callable[[], None],
+    on_success_message: Callable[[str], None],
+):
     """Lance le thread d'application des modifications."""
-    threading.Thread(target=_apply_worker, args=(app, metas), daemon=True).start()
+    logger.debug(f"Démarrage du Apply Task pour {len(metas)} items.")
+    threading.Thread(
+        target=_apply_worker, args=(metas, on_complete, on_success_message), daemon=True
+    ).start()
 
 
-def _apply_worker(app: "EnricherGUI", metas: List["EpubMeta"]):
+def _apply_worker(
+    metas: List["EpubMeta"],
+    on_complete: Callable[[], None],
+    on_success_message: Callable[[str], None],
+):
     """Logique exécutée dans le thread d'application."""
     any_changed = False
     for m in metas:
         try:
-            # Note: update_epub_with_metadata utilise les champs 'suggested_'
             success = update_epub_with_metadata(m.path, m)
             if success:
                 m.note = "Updated"
-                # Utiliser l'helper pour copier 'suggested' -> 'original'
                 helpers.apply_suggestions_to_model(m)
-                # Utiliser l'helper pour nettoyer le modèle (y compris 'processed')
                 helpers.reset_suggestions_on_model(m)
                 rename_epub_file(m)
                 any_changed = True
@@ -114,11 +136,7 @@ def _apply_worker(app: "EnricherGUI", metas: List["EpubMeta"]):
             logger.exception("Apply accepted failed for %s", m.filename)
 
     if any_changed:
-        # Demander à la GUI de se rafraîchir
-        app.after(0, app.schedule_gui_refresh)
-        app.after(
-            0,
-            lambda: app.show_info_message(
-                "Done", "Changes applied (check backup folder if needed)"
-            ),
-        )
+        # Signaler la complétion
+        on_complete()
+        # Demander l'affichage d'un message de succès
+        on_success_message("Changes applied (check backup folder if needed)")

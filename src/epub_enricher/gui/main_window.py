@@ -1,22 +1,22 @@
 # epub_enricher/src/epub_enricher/gui/main_window.py
 """
-Interface utilisateur principale avec Tkinter (Contrôleur/Orchestrateur)
+Interface utilisateur principale avec Tkinter (Orchestrateur/Vue-Contrôleur)
 """
 
 import logging
-import os
 import tkinter as tk
 from io import BytesIO
 from tkinter import filedialog, messagebox, ttk
-from typing import TYPE_CHECKING, Dict, List, Union
+from typing import TYPE_CHECKING, Dict, Union
 
 from PIL import Image
 
 from ..config import GUI_COVER_SIZE, GUI_GEOMETRY, GUI_TITLE, GUI_TREE_HEIGHT
-from ..core.epub_metadata import extract_metadata
-from ..core.file_utils import find_epubs_in_folder
+
+# Les importations core (extract, find) ne sont plus nécessaires ici
 from ..core.models import EpubMeta
 from . import helpers, task_manager
+from .app_controller import AppController  # Importer le nouveau contrôleur
 from .comparison_frame import ComparisonFrame
 
 if TYPE_CHECKING:
@@ -33,7 +33,11 @@ class EnricherGUI(tk.Tk):
         super().__init__()
         self.title(GUI_TITLE)
         self.geometry(GUI_GEOMETRY)
-        self.meta_list: List[EpubMeta] = []
+
+        # Le contrôleur gère l'état (la liste)
+        self.controller = AppController()
+
+        # self.meta_list n'existe plus ici
         self.cover_photo_cache: Dict[bytes, "ImageTk.PhotoImage"] = {}
         self.current_meta: Union[EpubMeta, None] = None
         self.comparison_frame: ComparisonFrame | None = None
@@ -44,9 +48,8 @@ class EnricherGUI(tk.Tk):
         s = ttk.Style()
         self.default_entry_bg = s.lookup("TEntry", "fieldbackground")
 
-    # (create_widgets reste inchangé)
     def create_widgets(self):
-        # --- Top Frame (Buttons) ---
+        # --- Top Frame (Buttons) (Identique) ---
         frm_top = ttk.Frame(self)
         frm_top.pack(fill=tk.X, padx=6, pady=6)
         self.folder_var = tk.StringVar()
@@ -54,7 +57,6 @@ class EnricherGUI(tk.Tk):
         ttk.Button(frm_top, text="Select & Scan Folder", command=self.select_and_scan_folder).pack(
             side=tk.LEFT, padx=4
         )
-
         ttk.Button(
             frm_top, text="Fetch suggestions", command=self.fetch_suggestions_for_selected
         ).pack(side=tk.LEFT, padx=4)
@@ -62,7 +64,7 @@ class EnricherGUI(tk.Tk):
             side=tk.LEFT, padx=4
         )
 
-        # --- Treeview (Main List) ---
+        # --- Treeview (Main List) (Identique) ---
         cols = (
             "filename",
             "title",
@@ -76,6 +78,7 @@ class EnricherGUI(tk.Tk):
             "status",
         )
         self.tree = ttk.Treeview(self, columns=cols, show="headings", height=GUI_TREE_HEIGHT)
+        # ... (Configuration du Treeview identique) ...
         column_configs = {
             "filename": {"width": 180, "anchor": "w"},
             "title": {"width": 200, "anchor": "w"},
@@ -89,7 +92,6 @@ class EnricherGUI(tk.Tk):
             "status": {"width": 90, "anchor": "w"},
         }
         for c in cols:
-            # Lier l'en-tête de colonne à la méthode de tri
             self.tree.heading(
                 c,
                 text=c.replace("_", " ").capitalize(),
@@ -97,142 +99,119 @@ class EnricherGUI(tk.Tk):
             )
             config = column_configs.get(c, {"width": 120, "anchor": "w"})
             self.tree.column(c, width=config["width"], anchor=config["anchor"])
-
         self.tree.pack(fill=tk.BOTH, expand=True, padx=6)
         self.tree.bind("<<TreeviewSelect>>", self.on_select)
 
-        # --- Bottom Frame (Details & Actions) ---
+        # --- Bottom Frame (Modification : injection des callbacks) ---
         bottom = ttk.Frame(self)
         bottom.pack(fill=tk.X, padx=6, pady=6)
         left = ttk.Frame(bottom)
         left.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         right = ttk.Frame(bottom)
         right.pack(side=tk.RIGHT, fill=tk.Y)
-        self.comparison_frame = ComparisonFrame(left, self)
+
+        # *** MODIFICATION ICI ***
+        # Injecter les méthodes de cette classe (les handlers)
+        # dans le ComparisonFrame.
+        self.comparison_frame = ComparisonFrame(
+            left,
+            on_use_original_field=self.choose_field,
+            on_use_original_cover=self.choose_cover,
+            on_edition_selected_cover=self._start_cover_download_task,
+        )
         self.comparison_frame.pack(fill=tk.BOTH, expand=True, padx=4, pady=4)
+
         ttk.Button(right, text="Reset Changes", command=self.reset_selected).pack(
             fill=tk.X, padx=4, pady=2
         )
         ttk.Button(right, text="Save CSV", command=self.export_csv).pack(fill=tk.X, padx=4, pady=8)
 
-    # --- Actions (Orchestration) ---
+    # --- Actions (Orchestration - Modifiées) ---
     def select_and_scan_folder(self):
-        """Combine la sélection et le scan du dossier en une seule action."""
+        """Demande un dossier et dit au contrôleur de le charger."""
         folder = filedialog.askdirectory()
         if not folder:
-            return  # Annulé par l'utilisateur
+            return
         self.folder_var.set(folder)
 
-        if not os.path.isdir(folder):
-            self.show_error_message("Error", "Select a valid folder first")
-            return
-
         try:
-            self.scan_folder()
+            # Délégué au contrôleur
+            self.controller.load_from_folder(folder)
+            self.refresh_tree()
+            self.clear_details()
         except Exception as e:
             logger.exception("Failed to scan folder")
             self.show_error_message("Error", f"An error occurred while scanning: {e}")
 
-    def scan_folder(self):
-        folder = self.folder_var.get()
-        if not folder or not os.path.isdir(folder):
-            self.show_error_message("Error", "Select a valid folder first")
-            return
-
-        files = find_epubs_in_folder(folder)
-        self.meta_list = []
-        for p in files:
-            res = extract_metadata(p)
-
-            # 1. Créer l'objet meta SANS le nouvel argument
-            meta_obj = EpubMeta(
-                path=p,
-                filename=os.path.basename(p),
-                original_title=res.get("title"),
-                original_authors=res.get("authors"),
-                original_isbn=res.get("identifier"),
-                original_language=res.get("language"),
-                original_tags=res.get("tags"),
-                original_publisher=res.get("publisher"),
-                original_publication_date=res.get("date"),
-                original_cover_data=res.get("cover_data"),
-                original_summary=res.get("summary"),
-            )
-
-            # 2. ASSIGNER le nouvel attribut APRES la création
-            meta_obj.found_editions = []
-
-            # 3. Ajouter l'objet complété à la liste
-            self.meta_list.append(meta_obj)
-
-        self.refresh_tree()
-        self.clear_details()
+    # scan_folder() est supprimé (logique déplacée vers AppController)
 
     def fetch_suggestions_for_selected(self):
-        """Délègue la recherche de suggestions au TaskManager."""
+        """Orchestre la recherche de suggestions."""
         sel = self.tree.selection()
         if not sel:
             self.show_info_message("Info", "Select one or more files in the list")
             return
-        # Délégation !
-        task_manager.start_fetch_task(self, sel)
 
-    def apply_accepted(self):
-        """Délègue l'application des modifications au TaskManager."""
+        # 1. Obtenir les objets Meta depuis le contrôleur
+        indices = [int(s) for s in sel]
+        metas_to_fetch = self.controller.get_metas_by_indices(indices)
 
-        if self.current_meta and self.comparison_frame:
-            self.comparison_frame.save_final_values_to_model()
+        # 2. Définir le callback (ce qu'il faut faire une fois terminé)
+        #    Nous utilisons self.after pour garantir l'exécution dans le thread GUI
+        def on_complete_callback():
+            return self.after(0, self.schedule_gui_refresh)
 
-        to_process = [m for m in self.meta_list if m.accepted]
-        if not to_process:
-            self.show_info_message("Info", "No accepted items to apply")
-            return
-        # Délégation !
-        task_manager.start_apply_task(self, to_process)
+        # 3. Démarrer la tâche de fond
+        task_manager.start_fetch_task(metas_to_fetch, on_complete_callback)
+
+    # apply_accepted() est supprimé (redondant avec apply_changes_to_selected)
 
     def apply_changes_to_selected(self):
-        """
-        Délègue l'application des modifications au TaskManager pour les
-        fichiers actuellement sélectionnés dans l'arbre.
-        """
+        """Orchestre l'application des modifications."""
         sel = self.tree.selection()
         if not sel:
             self.show_info_message("Info", "Select one or more files in the list to apply changes")
             return
 
-        # Sauvegarder les modifications en cours sur l'item actuellement
-        # affiché dans le comparison_frame, au cas où il serait
-        # dans la sélection mais pas encore sauvegardé.
         if self.current_meta and self.comparison_frame:
             self.comparison_frame.save_final_values_to_model()
 
-        # Construire la liste des objets meta à traiter
-        to_process = [self.meta_list[int(s)] for s in sel]
+        # 1. Obtenir les objets Meta depuis le contrôleur
+        indices = [int(s) for s in sel]
+        to_process = self.controller.get_metas_by_indices(indices)
 
         if not to_process:
-            # Ne devrait pas arriver si 'sel' n'est pas vide, mais par sécurité
             self.show_info_message("Info", "No valid items selected to apply")
             return
 
-        # Délégation !
-        task_manager.start_apply_task(self, to_process)
+        # 2. Définir les callbacks
+        def on_complete_callback():
+            return self.after(0, self.schedule_gui_refresh)
+
+        def on_success_callback(msg):
+            return self.after(0, lambda: self.show_info_message("Done", msg))
+
+        # 3. Démarrer la tâche de fond
+        task_manager.start_apply_task(to_process, on_complete_callback, on_success_callback)
 
     def reset_selected(self):
-        """Réinitialise les champs 'Valeur à appliquer' (suggested_)."""
+        """Demande au contrôleur de réinitialiser les suggestions."""
         sel = self.tree.selection()
         if not sel:
             return
-        for s in sel:
-            # Utilisation de l'helper pour réinitialiser le modèle
-            helpers.reset_suggestions_on_model(self.meta_list[int(s)])
 
-        # Rafraîchir l'interface pour montrer la réinitialisation
+        # 1. Obtenir les objets Meta
+        indices = [int(s) for s in sel]
+        metas_to_reset = self.controller.get_metas_by_indices(indices)
+
+        # 2. Demander la réinitialisation au contrôleur
+        self.controller.reset_metas(metas_to_reset)
+
+        # 3. Rafraîchir l'interface
         self.schedule_gui_refresh()
 
     def export_csv(self):
-        """Délègue l'exportation CSV à l'helper."""
-
-        # Sauvegarder les modifications en cours sur l'item
+        """Orchestre l'exportation CSV."""
         if self.current_meta and self.comparison_frame:
             self.comparison_frame.save_final_values_to_model()
 
@@ -240,16 +219,16 @@ class EnricherGUI(tk.Tk):
         if not p:
             return
         try:
-            # Délégation !
-            helpers.export_to_csv(p, self.meta_list)
+            # Délégué au contrôleur
+            self.controller.export_to_csv(p)
             self.show_info_message("Success", f"Data exported to {p}")
         except Exception as e:
             self.show_error_message("Error", f"Failed to export CSV: {e}")
 
-    # --- Gestion de l'état de l'interface (Callbacks depuis les workers) ---
+    # --- Gestion de l'état de l'interface (Callbacks) ---
 
     def schedule_gui_refresh(self):
-        """Met à jour l'arbre et le panneau de détails (appelé depuis un thread)."""
+        """Met à jour l'arbre et le panneau de détails."""
         self.refresh_tree()
         self.on_select(None)  # Rafraîchit aussi le panneau de comparaison
 
@@ -261,13 +240,16 @@ class EnricherGUI(tk.Tk):
         """Wrapper thread-safe pour messagebox.showerror."""
         messagebox.showerror(title, message)
 
-    # --- Gestion de la VUE (Treeview & Details) ---
+    # --- Gestion de la VUE (Treeview & Details - Modifiée) ---
     def refresh_tree(self):
+        """Met à jour le Treeview en lisant depuis le contrôleur."""
         selected_ids = self.tree.selection()
         self.tree.delete(*self.tree.get_children())
 
-        for idx, m in enumerate(self.meta_list):
-            # Utilisation de l'helper
+        # Obtenir les données depuis le contrôleur
+        all_meta = self.controller.get_all_meta()
+
+        for idx, m in enumerate(all_meta):
             quality_score = helpers.calculate_metadata_quality(m)
             vals = self._get_tree_values_for_meta(m, quality_score)
             self.tree.insert("", "end", iid=str(idx), values=vals)
@@ -279,7 +261,8 @@ class EnricherGUI(tk.Tk):
                 pass
 
     def sort_treeview_column(self, tree, col, reverse):
-        """Trie les données du Treeview par la colonne spécifiée."""
+        """Trie les données du Treeview (Identique)."""
+        # ... (Aucun changement) ...
         data = [(tree.set(child, col), child) for child in tree.get_children("")]
 
         def convert_key(item):
@@ -303,116 +286,112 @@ class EnricherGUI(tk.Tk):
         )
 
     def _get_tree_values_for_meta(self, m: EpubMeta, quality_score: int) -> tuple:
-        """Helper interne pour formater les valeurs du Treeview."""
+        """Helper interne (Identique)."""
+        # ... (Aucun changement) ...
         status_text = "processed" if m.processed else "idle"
         if quality_score > 0:
             status_text += f" ({quality_score}%)"
         summary_text = m.suggested_summary or m.original_summary or ""
         summary_preview = (summary_text[:50] + "...") if len(summary_text) > 50 else summary_text
         return (
-            m.filename,  # 1
-            m.suggested_title or m.original_title or "",  # 2
-            ", ".join(m.suggested_authors or m.original_authors or []),  # 3
-            m.suggested_publisher or m.original_publisher or "",  # 4
-            m.suggested_isbn or m.original_isbn or "",  # 5
-            m.suggested_language or m.original_language or "",  # 6
-            m.suggested_publication_date or m.original_publication_date or "",  # 7
-            ", ".join(m.suggested_tags or m.original_tags or []),  # 8 (Tags)
-            summary_preview,  # 9 (Summary)
-            status_text,  # 10 (Status)
+            m.filename,
+            m.suggested_title or m.original_title or "",
+            ", ".join(m.suggested_authors or m.original_authors or []),
+            m.suggested_publisher or m.original_publisher or "",
+            m.suggested_isbn or m.original_isbn or "",
+            m.suggested_language or m.original_language or "",
+            m.suggested_publication_date or m.original_publication_date or "",
+            ", ".join(m.suggested_tags or m.original_tags or []),
+            summary_preview,
+            status_text,
         )
 
     def on_select(self, evt=None):
-        # Trouver le NOUVEL item sélectionné
+        """Gère la sélection dans le Treeview (Modifié)."""
         new_sel_id = None
         sel = self.tree.selection()
         if sel:
             new_sel_id = int(sel[0])
 
-        # Si l'objet méta actuel est différent du nouveau, SAUVEGARDER l'ancien.
-        if (
-            self.current_meta
-            and self.comparison_frame
-            and (new_sel_id is None or self.meta_list[new_sel_id] != self.current_meta)
-        ):
+        # Obtenir le nouvel objet meta depuis le contrôleur
+        new_meta = self.controller.get_meta_by_index(new_sel_id) if new_sel_id is not None else None
+
+        if self.current_meta and self.comparison_frame and (new_meta != self.current_meta):
             try:
                 self.comparison_frame.save_final_values_to_model()
             except Exception as e:
                 logger.warning("Failed to save previous meta on selection change: %s", e)
 
-        if not sel:
+        if not new_meta:
             self.clear_details()
             return
 
-        self.current_meta = self.meta_list[new_sel_id]
+        self.current_meta = new_meta
         if self.comparison_frame:
             self.comparison_frame.load_meta(self.current_meta)
 
     def clear_details(self):
+        """Vide le panneau de détails (Identique)."""
+        # ... (Aucun changement) ...
         if self.current_meta and self.comparison_frame:
             try:
                 self.comparison_frame.save_final_values_to_model()
             except Exception as e:
                 logger.warning("Failed to save previous meta on clear: %s", e)
-
         if self.comparison_frame:
             self.comparison_frame.load_meta(None)
         self.current_meta = None
 
-    # --- Callbacks (appelés depuis ComparisonFrame & EditionsWindow) ---
+    # --- Handlers (appelés par les callbacks de ComparisonFrame) ---
 
-    def choose_field(self, field: str, side: str):
-        """
-        Copie la valeur 'original' (ou 'content') vers la 'suggested'
-        pour un champ spécifique.
-        MODIFIÉ : Met à jour le modèle ET le widget GUI directement
-        sans appeler load_meta(), pour éviter d'écraser les autres
-        modifications non sauvegardées.
-        """
-        if not self.current_meta or side != "orig" or not self.comparison_frame:
+    def choose_field(self, field: str):
+        """Handler pour 'on_use_original_field' (Logique identique)."""
+        if not self.current_meta or not self.comparison_frame:
             return
 
-        # 1. Obtenir la valeur originale
-        if field in ("summary", "tags"):
+        # ... (Logique identique à l'ancienne méthode) ...
+        if field in ("summary", "tags", "authors"):
             value = getattr(self.current_meta, f"original_{field}", None)
         else:
             value = getattr(self.current_meta, f"original_{field}")
-
-        # 2. Mettre à jour le modèle
         setattr(self.current_meta, f"suggested_{field}", value)
-
-        # 3. Mettre à jour la GUI (StringVar ou Text) SANS recharger
         try:
             if field == "summary":
-                # Cas spécial pour le widget Text
                 final_text = self.comparison_frame.detail_entries["summary"]["final"]
                 final_text.delete(1.0, tk.END)
                 final_text.insert(1.0, value or "")
             elif field == "authors" or field == "tags":
-                # Cas spécial pour les listes
                 str_value = ", ".join(value or [])
                 self.comparison_frame.detail_vars[field]["final"].set(str_value)
             else:
-                # Cas standard pour les StringVars
                 self.comparison_frame.detail_vars[field]["final"].set(value or "")
-
-            # 4. Mettre à jour les couleurs de comparaison
             self.comparison_frame.update_comparison_colors()
-
         except KeyError:
             logger.warning("Tentative de mise à jour d'un champ GUI inconnu : %s", field)
         except Exception as e:
             logger.exception("Erreur lors de la mise à jour directe du champ GUI : %s", e)
 
-    def choose_cover(self, side: str):
-        if not self.current_meta or side != "orig":
+    def choose_cover(self):
+        """Handler pour 'on_use_original_cover' (Logique identique)."""
+        if not self.current_meta:
             return
         self.current_meta.suggested_cover_data = self.current_meta.original_cover_data
         self.on_select(None)  # Recharger le panneau
 
-    # (get_cover_photo reste inchangé)
+    def _start_cover_download_task(self, meta: "EpubMeta"):
+        """
+        Handler pour 'on_edition_selected_cover'.
+        Démarre une tâche de fond pour télécharger la couverture.
+        """
+
+        def on_complete_callback():
+            return self.after(0, self.schedule_gui_refresh)
+
+        task_manager.start_cover_download_task(meta, on_complete_callback)
+
+    # --- (get_cover_photo reste inchangé) ---
     def get_cover_photo(self, data: Union[bytes, None]) -> "ImageTk.PhotoImage | None":
-        """Charge une image depuis les données binaires et la met en cache."""
+        # ... (Aucun changement) ...
         if not data:
             return None
         if data in self.cover_photo_cache:
@@ -431,10 +410,4 @@ class EnricherGUI(tk.Tk):
             logger.exception("Échec de la création de l'aperçu d'image")
             return None
 
-    def _update_cover_for_edition(self, meta: "EpubMeta"):
-        """
-        Petit worker pour juste re-télécharger la couverture.
-        (Appelé par ComparisonFrame)
-        """
-        task_manager._download_cover_data(meta)
-        self.after(0, self.schedule_gui_refresh)
+    # _update_cover_for_edition est renommé _start_cover_download_task

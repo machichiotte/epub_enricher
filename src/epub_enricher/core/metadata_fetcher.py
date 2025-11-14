@@ -12,7 +12,6 @@ from epub_enricher.core.text_utils import clean_text
 
 from ..config import (
     COVER_CACHE_DIR,
-    OPENLIB_BOOK,
     OPENLIB_SEARCH,
     ensure_directories,
 )
@@ -101,8 +100,26 @@ def query_openlibrary_full(
 
     try:
         # 1. Recherche initiale par ISBN ou titre/auteur
-        query_url = OPENLIB_BOOK if isbn else OPENLIB_SEARCH
-        params = {"q": isbn} if isbn else {"title": title, "author": authors[0]}
+
+        # TOUJOURS utiliser l'API de recherche (OPENLIB_SEARCH)
+        query_url = OPENLIB_SEARCH
+
+        params = {}
+        if isbn:
+            # La recherche 'q' est la plus fiable pour un ISBN ou un texte
+            params["q"] = isbn
+        else:
+            # Fallback sur titre/auteur si pas d'ISBN
+            if title:
+                params["title"] = title
+            # Gérer le cas où 'authors' est None ou une liste vide
+            if authors and len(authors) > 0 and authors[0]:
+                params["author"] = authors[0]
+
+        # Si on n'a ni ISBN, ni titre, ni auteur, on ne peut rien faire
+        if not params:
+            logger.info("OL: No ISBN, title, or author provided. Skipping search.")
+            return result
 
         r = http_get(query_url, params=params)
         data = r.json()
@@ -139,6 +156,8 @@ def query_openlibrary_full(
 
         # 6. ID de couverture (Open Library utilise un ID unique par travail ou édition)
         result["cover_id"] = doc.get("cover_i")
+
+        result["related_docs"] = docs
 
         logger.info(
             "OL: Found metadata. Tags: %d, Summary: %s",
