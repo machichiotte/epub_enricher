@@ -21,10 +21,10 @@ GOOGLE_BOOKS_API = "https://www.googleapis.com/books/v1/volumes"
 def _parse_google_book(item: Dict) -> Dict[str, Any]:
     """
     Extrait les métadonnées d'un résultat Google Books.
-    
+
     Args:
         item: Résultat JSON de l'API Google Books
-        
+
     Returns:
         Dictionnaire avec les clés 'summary' et 'tags'
     """
@@ -45,14 +45,14 @@ def _parse_google_book(item: Dict) -> Dict[str, Any]:
 def query_google_books(title: Optional[str] = None, isbn: Optional[str] = None) -> Dict[str, Any]:
     """
     Recherche Google Books par ISBN ou titre.
-    
+
     Args:
         title: Titre du livre (optionnel)
         isbn: Code ISBN (optionnel)
-        
+
     Returns:
         Dictionnaire avec les métadonnées trouvées (summary, tags) ou {}
-        
+
     Note:
         L'ISBN est prioritaire sur le titre si les deux sont fournis
     """

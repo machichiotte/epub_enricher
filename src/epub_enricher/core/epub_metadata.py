@@ -4,9 +4,9 @@ Module de compatibilité rétroactive pour epub_metadata.
 
 ⚠️ DEPRECATED: Ce module est conservé uniquement pour la compatibilité
    rétroactive. Utilisez le nouveau module epub/ à la place:
-   
+
    from epub_enricher.core.epub import extract_metadata, update_epub_with_metadata
-   
+
 Ce module sera supprimé dans une version future.
 """
 

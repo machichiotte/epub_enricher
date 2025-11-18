@@ -20,10 +20,10 @@ logger = logging.getLogger(__name__)
 def safe_read_epub(epub_path: str) -> Optional[EpubBook]:
     """
     Lit un fichier EPUB de manière sécurisée.
-    
+
     Args:
         epub_path: Chemin vers le fichier EPUB
-        
+
     Returns:
         Objet EpubBook si succès, None sinon
     """
@@ -40,12 +40,12 @@ def safe_read_epub(epub_path: str) -> Optional[EpubBook]:
 def _get_metadata_field(book: EpubBook, namespace: str, name: str) -> Optional[Any]:
     """
     Helper générique pour extraire un champ de métadonnées.
-    
+
     Args:
         book: Objet EpubBook
         namespace: Namespace de métadonnées (ex: 'DC')
         name: Nom du champ (ex: 'title')
-        
+
     Returns:
         Valeur du champ ou None
     """
@@ -86,7 +86,7 @@ def _get_language(book: EpubBook) -> Optional[str]:
 def _get_authors(book: EpubBook) -> Optional[List[str]]:
     """
     Extrait la liste des auteurs.
-    
+
     Returns:
         Liste des auteurs ou None si aucun trouvé
     """
@@ -103,7 +103,7 @@ def _get_authors(book: EpubBook) -> Optional[List[str]]:
 def _get_tags(book: EpubBook) -> Optional[List[str]]:
     """
     Extrait les sujets/tags.
-    
+
     Returns:
         Liste des tags ou None si aucun trouvé
     """
@@ -117,14 +117,14 @@ def _get_tags(book: EpubBook) -> Optional[List[str]]:
 def _get_identifier(book: EpubBook) -> Optional[str]:
     """
     Extrait l'ISBN canonique depuis les identifiants.
-    
+
     Returns:
         ISBN canonique ou None
     """
     from isbnlib import canonical, is_isbn10, is_isbn13
-    
+
     from ...config import ISBN_RE
-    
+
     try:
         ids_meta = book.get_metadata("DC", "identifier")
         for ident in ids_meta:
@@ -144,14 +144,14 @@ def _get_identifier(book: EpubBook) -> Optional[str]:
 def extract_metadata(epub_path: str) -> Dict:
     """
     Extrait toutes les métadonnées d'un fichier EPUB.
-    
+
     Cette fonction orchestre l'extraction de toutes les métadonnées
     disponibles et utilise des stratégies de fallback pour les
     données manquantes (langue, ISBN).
-    
+
     Args:
         epub_path: Chemin vers le fichier EPUB
-        
+
     Returns:
         Dictionnaire contenant toutes les métadonnées extraites.
         Les clés possibles sont: title, authors, language, identifier,
@@ -172,7 +172,7 @@ def extract_metadata(epub_path: str) -> Dict:
             "cover_data",
         ]
     }
-    
+
     # Lire le fichier EPUB
     book = safe_read_epub(epub_path)
     if not book:
@@ -188,14 +188,14 @@ def extract_metadata(epub_path: str) -> Dict:
     data["date"] = _get_date(book)
     data["summary"] = _get_summary(book)
     data["tags"] = _get_tags(book)
-    
+
     # Extraction de la couverture
     data["cover_data"] = find_cover_data(book, epub_path)
 
     # Logique de fallback pour les métadonnées manquantes
     if not data["language"]:
         data["language"] = detect_language_from_text(book)
-        
+
     if not data["identifier"]:
         data["identifier"] = find_isbn_in_text(book)
 

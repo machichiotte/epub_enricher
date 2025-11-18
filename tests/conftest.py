@@ -5,8 +5,6 @@ Configuration globale pour pytest.
 Fournit des fixtures réutilisables pour tous les tests.
 """
 
-import os
-from pathlib import Path
 from typing import Dict
 
 import pytest
@@ -32,7 +30,7 @@ def sample_epub_metadata() -> Dict:
 def sample_epub_meta_object():
     """Retourne un objet EpubMeta d'exemple pour tests."""
     from epub_enricher.core.models import EpubMeta
-    
+
     return EpubMeta(
         path="/fake/path/test.epub",
         filename="test.epub",
@@ -56,13 +54,14 @@ def temp_dir(tmp_path):
 @pytest.fixture
 def mock_http_response():
     """Retourne un mock de réponse HTTP."""
+
     class MockResponse:
         def __init__(self, json_data, status_code=200):
             self.json_data = json_data
             self.status_code = status_code
             self.text = str(json_data)
-        
+
         def json(self):
             return self.json_data
-    
+
     return MockResponse

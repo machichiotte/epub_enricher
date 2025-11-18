@@ -36,13 +36,13 @@ GENRE_MAPPING = {
 def map_tags_to_genre(tags: List[str]) -> Optional[str]:
     """
     Mappe une liste de tags bruts vers un genre standard.
-    
+
     Utilise le mapping GENRE_MAPPING pour identifier le premier genre
     correspondant dans la liste de tags.
-    
+
     Args:
         tags: Liste de tags bruts (de Google Books, OpenLibrary, etc.)
-        
+
     Returns:
         Genre standard ou None si aucun match
     """
@@ -59,10 +59,10 @@ def map_tags_to_genre(tags: List[str]) -> Optional[str]:
 def map_openlibrary_subject_to_genre(subject: str) -> Optional[str]:
     """
     Mappe un sujet OpenLibrary vers un genre standard.
-    
+
     Args:
         subject: Sujet OpenLibrary (chaîne de caractères)
-        
+
     Returns:
         Genre standard ou None si aucun match
     """
@@ -76,24 +76,20 @@ def map_openlibrary_subject_to_genre(subject: str) -> Optional[str]:
     return None
 
 
-def aggregate_genre(
-    ol_tags: List[str], 
-    google_tags: List[str], 
-    summary_text: str
-) -> Optional[str]:
+def aggregate_genre(ol_tags: List[str], google_tags: List[str], summary_text: str) -> Optional[str]:
     """
     Détermine le meilleur genre en agrégeant plusieurs sources.
-    
+
     Logique de priorité:
     1. Tags OpenLibrary (plus fiables pour les livres)
     2. Tags Google Books
     3. Classification par analyse du texte du résumé
-    
+
     Args:
         ol_tags: Tags depuis OpenLibrary
         google_tags: Tags depuis Google Books
         summary_text: Texte du résumé pour analyse de fallback
-        
+
     Returns:
         Genre suggéré ou None
     """

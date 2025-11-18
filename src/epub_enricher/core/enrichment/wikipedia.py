@@ -22,10 +22,10 @@ WIKIPEDIA_API = "https://fr.wikipedia.org/api/rest_v1/page/summary"
 def _parse_wiki_page(data: dict) -> Optional[str]:
     """
     Extrait le résumé du résultat de l'API Wikipedia.
-    
+
     Args:
         data: Résultat JSON de l'API Wikipedia
-        
+
     Returns:
         Résumé nettoyé ou None
     """
@@ -38,13 +38,13 @@ def _parse_wiki_page(data: dict) -> Optional[str]:
 def query_wikipedia_summary(title: str) -> Optional[str]:
     """
     Récupère le résumé d'une page Wikipedia (version française).
-    
+
     Args:
         title: Titre de la page Wikipedia (généralement le titre du livre)
-        
+
     Returns:
         Résumé de la page ou None si non trouvé
-        
+
     Note:
         Utilise l'API REST Wikipedia qui ne nécessite pas de clé.
         Le titre doit correspondre exactement au titre de la page Wikipedia.
