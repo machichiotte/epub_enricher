@@ -9,7 +9,7 @@ et agréger intelligemment leurs résultats.
 import logging
 from typing import Any, Dict, List, Optional
 
-from ..metadata_fetcher import download_cover, query_openlibrary_full
+from ..openlibrary_client import download_cover, query_openlibrary_full
 from .genre_mapper import aggregate_genre
 from .google_books import query_google_books
 from .wikipedia import query_wikipedia_summary
@@ -24,7 +24,7 @@ def fetch_enriched_metadata(
     Interroge toutes les sources externes et agrège les résultats.
 
     Cette fonction orchestre:
-    - OpenLibrary (via metadata_fetcher)
+    - OpenLibrary (via openlibrary_client)
     - Google Books
     - Wikipedia
 

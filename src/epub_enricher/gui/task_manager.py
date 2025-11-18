@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING, Callable, Dict, List
 
 from ..core.epub import update_epub_with_metadata
 from ..core.file_utils import rename_epub_file
-from ..core.metadata_fetcher import download_cover, query_openlibrary_full
+from ..core.openlibrary_client import download_cover, query_openlibrary_full
 from . import helpers
 
 if TYPE_CHECKING:

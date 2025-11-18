@@ -16,7 +16,7 @@ from typing import List, Optional
 from .enrichment import fetch_enriched_metadata
 from .epub import extract_metadata, update_epub_with_metadata
 from .file_utils import find_epubs_in_folder, rename_epub_file
-from .metadata_fetcher import query_openlibrary_full
+from .openlibrary_client import query_openlibrary_full
 from .models import EpubMeta
 
 logger = logging.getLogger(__name__)

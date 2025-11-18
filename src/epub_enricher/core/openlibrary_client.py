@@ -1,4 +1,4 @@
-# epub_enricher/src/epub_enricher/core/metadata_fetcher.py
+# epub_enricher/src/epub_enricher/core/openlibrary_client.py
 """
 Logique pour interroger les APIs (OpenLibrary) et récupérer les métadonnées
 """
