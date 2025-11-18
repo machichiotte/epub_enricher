@@ -8,7 +8,7 @@ import logging
 import threading
 from typing import TYPE_CHECKING, Callable, Dict, List
 
-from ..core.epub_metadata import update_epub_with_metadata
+from ..core.epub import update_epub_with_metadata
 from ..core.file_utils import rename_epub_file
 from ..core.metadata_fetcher import download_cover, query_openlibrary_full
 from . import helpers

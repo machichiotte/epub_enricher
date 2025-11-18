@@ -11,7 +11,7 @@ import logging
 import os
 from typing import List
 
-from ..core.epub_metadata import extract_metadata
+from ..core.epub import extract_metadata
 from ..core.file_utils import find_epubs_in_folder
 from ..core.models import EpubMeta
 from . import helpers
