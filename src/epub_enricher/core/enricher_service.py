@@ -14,7 +14,7 @@ import os
 from typing import List, Optional
 
 from .epub import extract_metadata, update_epub_with_metadata
-from .external_apis import fetch_genre_and_summary_from_sources
+from .enrichment import fetch_enriched_metadata
 from .file_utils import find_epubs_in_folder, rename_epub_file
 from .metadata_fetcher import query_openlibrary_full
 from .models import EpubMeta
@@ -75,7 +75,7 @@ class EnricherService:
             )
             
             # 4. Récupération des métadonnées enrichies (genre, résumé, etc.)
-            enriched_data = fetch_genre_and_summary_from_sources(
+            enriched_data = fetch_enriched_metadata(
                 title=meta.original_title,
                 authors=meta.original_authors,
                 isbn=meta.original_isbn,
