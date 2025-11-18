@@ -27,6 +27,49 @@ Outil Python complet pour enrichir automatiquement les métadonnées des fichier
 -   **Cache des images** : Évite les téléchargements répétés
 -   **Logging complet** : Traçabilité de toutes les opérations
 
+## 🏗️ Architecture
+
+Le projet suit une architecture modulaire avec séparation stricte des responsabilités (SOC/SOR). Consultez [`docs/architecture.md`](docs/architecture.md) pour les détails complets.
+
+### Structure des Modules
+
+```
+epub_enricher/
+├── core/                    # Logique métier
+│   ├── epub/               # Manipulation EPUB
+│   │   ├── reader.py       # Extraction métadonnées
+│   │   ├── writer.py       # Écriture métadonnées
+│   │   ├── cover_finder.py # Recherche couverture (Strategy pattern)
+│   │   └── metadata_extractors.py
+│   ├── enrichment/         # APIs externes
+│   │   ├── google_books.py
+│   │   ├── wikipedia.py
+│   │   ├── aggregator.py   # Orchestration
+│   │   └── genre_mapper.py
+│   ├── enricher_service.py # Service Layer (réutilisable CLI/GUI)
+│   ├── metadata_fetcher.py # Client OpenLibrary
+│   └── models.py           # EpubMeta dataclass
+├── gui/                     # Interface graphique (MVC)
+│   ├── main_window.py
+│   ├── app_controller.py
+│   └── task_manager.py     # Threading
+└── cli.py                   # Interface CLI
+```
+
+### Utilisation Programmatique
+
+```python
+# Nouveau: Imports recommandés depuis les modules refactorisés
+from epub_enricher.core.epub import extract_metadata, update_epub_with_metadata
+from epub_enricher.core.enrichment import fetch_enriched_metadata
+from epub_enricher.core.enricher_service import EnricherService
+
+# Service Layer (recommandé)
+service = EnricherService()
+meta = service.process_epub("path/to/book.epub")
+service.apply_enrichment(meta)
+```
+
 ## 📦 Installation
 
 ### Prérequis
