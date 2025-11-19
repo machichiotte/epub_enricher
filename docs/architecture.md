@@ -187,10 +187,15 @@ classDiagram
         GENRE_MAPPING Dict
     }
     
+    class openlibrary_client {
+        +query_openlibrary_full() Dict
+        +download_cover() bytes
+    }
+    
     aggregator --> google_books
     aggregator --> wikipedia
     aggregator --> genre_mapper
-    aggregator --> openlibrary[metadata_fetcher]
+    aggregator --> openlibrary_client
 ```
 
 #### Service Layer
